@@ -25,18 +25,24 @@ type Project struct {
 		Start []string `yaml:"start"`
 	} `yaml:"dev"`
 
-	// Dir is the project root (~/.catherdd/projects/<name>), set after loading.
-	Dir string `yaml:"-"`
+	// ConfigDir is the directory that contains the project.yaml (may be inside
+	// the repo's projects/ or projects.local/ tree, or in ~/.catherdd/projects/).
+	ConfigDir string `yaml:"-"`
+
+	// DataDir is where runtime data lives (canonical clone, worktrees).
+	// Always set to <daemonRoot>/projects/<name>, independent of where the
+	// project.yaml was found.
+	DataDir string `yaml:"-"`
 }
 
 // MainDir returns the path of the canonical checkout for this project.
 func (p *Project) MainDir() string {
-	return filepath.Join(p.Dir, "main")
+	return filepath.Join(p.DataDir, "main")
 }
 
 // WorktreesDir returns the base directory that holds all worktrees for this project.
 func (p *Project) WorktreesDir() string {
-	return filepath.Join(p.Dir, "worktrees")
+	return filepath.Join(p.DataDir, "worktrees")
 }
 
 // WorktreeDir returns the path for a specific instance's worktree.
@@ -44,24 +50,32 @@ func (p *Project) WorktreeDir(instanceID string) string {
 	return filepath.Join(p.WorktreesDir(), instanceID)
 }
 
-// loadProject reads and parses the project.yaml for the named project.
-// rootDir is the ~/.catherdd/projects directory.
-func loadProject(rootDir, name string) (*Project, error) {
-	yamlPath := filepath.Join(rootDir, name, "project.yaml")
-	data, err := os.ReadFile(yamlPath)
-	if err != nil {
-		return nil, fmt.Errorf("read project.yaml: %w", err)
-	}
+// loadProject searches configDirs in order for a project named name, returning
+// the first match.  Runtime data (clones, worktrees) is placed under
+// dataRoot/projects/<name> regardless of which config dir the YAML came from.
+func loadProject(configDirs []string, dataRoot, name string) (*Project, error) {
+	for _, dir := range configDirs {
+		yamlPath := filepath.Join(dir, name, "project.yaml")
+		data, err := os.ReadFile(yamlPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("read project.yaml: %w", err)
+		}
 
-	var p Project
-	if err := yaml.Unmarshal(data, &p); err != nil {
-		return nil, fmt.Errorf("parse project.yaml: %w", err)
+		var p Project
+		if err := yaml.Unmarshal(data, &p); err != nil {
+			return nil, fmt.Errorf("parse project.yaml: %w", err)
+		}
+		if p.Name == "" {
+			p.Name = name
+		}
+		p.ConfigDir = filepath.Join(dir, name)
+		p.DataDir = filepath.Join(dataRoot, "projects", name)
+		return &p, nil
 	}
-	if p.Name == "" {
-		p.Name = name
-	}
-	p.Dir = filepath.Join(rootDir, name)
-	return &p, nil
+	return nil, fmt.Errorf("project %q not found in any projects directory", name)
 }
 
 // ensureMainCheckout clones the project repo into the main directory if it

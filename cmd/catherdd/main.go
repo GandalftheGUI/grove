@@ -20,17 +20,33 @@ import (
 	"github.com/ianremillard/catherdd/internal/daemon"
 )
 
+// stringSlice is a repeatable string flag (--projects-dir a --projects-dir b).
+type stringSlice []string
+
+func (s *stringSlice) String() string { return "" }
+func (s *stringSlice) Set(v string) error {
+	*s = append(*s, v)
+	return nil
+}
+
 func main() {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		log.Fatalf("cannot determine home directory: %v", err)
 	}
 	defaultRoot := filepath.Join(homeDir, ".catherdd")
+	// CATHERDD_ROOT env var overrides the default so users can point at a
+	// local test directory without touching ~/.catherdd.
+	if env := os.Getenv("CATHERDD_ROOT"); env != "" {
+		defaultRoot = env
+	}
 
-	rootDir := flag.String("root", defaultRoot, "catherdd data directory")
+	rootDir := flag.String("root", defaultRoot, "catherdd data directory (env: CATHERDD_ROOT)")
+	var projectsDirs stringSlice
+	flag.Var(&projectsDirs, "projects-dir", "project config directory to search (may be repeated; personal before global)")
 	flag.Parse()
 
-	d, err := daemon.New(*rootDir)
+	d, err := daemon.New(*rootDir, []string(projectsDirs))
 	if err != nil {
 		log.Fatalf("daemon init: %v", err)
 	}

@@ -1,0 +1,11 @@
+bin/
+
+# Personal project definitions — not shared with the team.
+# Run: catherd project create <name>   (default writes here)
+projects.local/
+
+# Local test environments — never committed.
+# Create testenv/ (or any name) and set CATHERDD_ROOT=./testenv
+# to run a self-contained daemon against a local project definition.
+testenv/
+.testenv/

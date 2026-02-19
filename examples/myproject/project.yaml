@@ -1,0 +1,25 @@
+# Example project definition.
+#
+# Copy this file to your testenv:
+#
+#   mkdir -p testenv/projects/myproject
+#   cp examples/myproject/project.yaml testenv/projects/myproject/
+#
+# Then run:
+#
+#   export CATHERDD_ROOT=$PWD/testenv
+#   catherd start myproject "your task here"
+
+name: myproject
+repo: git@github.com:example/myproject.git
+
+bootstrap:
+  - npm install
+
+agent:
+  command: claude
+  args: []
+
+dev:
+  start:
+    - npm run dev

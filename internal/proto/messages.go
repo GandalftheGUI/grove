@@ -21,8 +21,9 @@ const (
 	ReqStart   = "start"
 	ReqList    = "list"
 	ReqAttach  = "attach"
-	ReqLogs    = "logs"
-	ReqDestroy = "destroy"
+	ReqLogs       = "logs"
+	ReqLogsFollow = "logs_follow"
+	ReqDestroy    = "destroy"
 )
 
 // Instance state constants.

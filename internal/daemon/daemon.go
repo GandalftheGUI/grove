@@ -26,14 +26,18 @@ import (
 // Daemon is the central supervisor.  It owns a map of live instances and
 // handles all IPC requests from catherd.
 type Daemon struct {
-	rootDir string // ~/.catherdd
+	rootDir    string   // ~/.catherdd  (runtime data root)
+	configDirs []string // ordered list of directories to search for project YAMLs
 
 	mu        sync.Mutex
 	instances map[string]*Instance // keyed by instance ID
 }
 
 // New creates a Daemon that uses rootDir (~/.catherdd) as its data directory.
-func New(rootDir string) (*Daemon, error) {
+// configDirs is the ordered list of directories to search for project.yaml
+// files (personal first, then global, then fallback).  If empty, the daemon
+// falls back to rootDir/projects/ for backward compatibility.
+func New(rootDir string, configDirs []string) (*Daemon, error) {
 	for _, sub := range []string{
 		"projects",
 		"instances",
@@ -45,8 +49,9 @@ func New(rootDir string) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		rootDir:   rootDir,
-		instances: make(map[string]*Instance),
+		rootDir:    rootDir,
+		configDirs: configDirs,
+		instances:  make(map[string]*Instance),
 	}
 
 	if err := d.loadPersistedInstances(); err != nil {
@@ -114,6 +119,9 @@ func (d *Daemon) handleConn(conn net.Conn) {
 	case proto.ReqLogs:
 		d.handleLogs(conn, req)
 
+	case proto.ReqLogsFollow:
+		d.handleLogsFollow(conn, req)
+
 	case proto.ReqDestroy:
 		d.handleDestroy(conn, req)
 
@@ -136,8 +144,7 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 		return
 	}
 
-	projectsDir := filepath.Join(d.rootDir, "projects")
-	p, err := loadProject(projectsDir, req.Project)
+	p, err := loadProject(d.configDirs, d.rootDir, req.Project)
 	if err != nil {
 		respond(conn, proto.Response{OK: false, Error: err.Error()})
 		return
@@ -239,6 +246,55 @@ func (d *Daemon) handleLogs(conn net.Conn, req proto.Request) {
 	// Send as a JSON string.
 	respond(conn, proto.Response{OK: true, InstanceID: req.InstanceID})
 	conn.Write(logs)
+}
+
+func (d *Daemon) handleLogsFollow(conn net.Conn, req proto.Request) {
+	inst := d.getInstance(req.InstanceID)
+	if inst == nil {
+		respond(conn, proto.Response{OK: false, Error: "instance not found: " + req.InstanceID})
+		return
+	}
+	respond(conn, proto.Response{OK: true})
+
+	// Snapshot current logBuf; track how many bytes we've sent.
+	inst.mu.Lock()
+	initial := make([]byte, len(inst.logBuf))
+	copy(initial, inst.logBuf)
+	offset := len(inst.logBuf)
+	inst.mu.Unlock()
+
+	if len(initial) > 0 {
+		if _, err := conn.Write(initial); err != nil {
+			return
+		}
+	}
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		inst.mu.Lock()
+		state := inst.state
+		// Clamp offset if logBuf was trimmed (rolled over 1 MiB cap).
+		if offset > len(inst.logBuf) {
+			offset = 0
+		}
+		newData := make([]byte, len(inst.logBuf)-offset)
+		copy(newData, inst.logBuf[offset:])
+		offset += len(newData)
+		inst.mu.Unlock()
+
+		if len(newData) > 0 {
+			if _, err := conn.Write(newData); err != nil {
+				return // client disconnected
+			}
+		}
+
+		// Exit when instance is done AND no more new bytes remain.
+		if (state == proto.StateExited || state == proto.StateCrashed) && len(newData) == 0 {
+			return
+		}
+	}
 }
 
 func (d *Daemon) handleDestroy(conn net.Conn, req proto.Request) {

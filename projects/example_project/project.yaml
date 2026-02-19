@@ -1,0 +1,25 @@
+# Example project definition.
+#
+# This file lives in projects/ (global, tracked by git).
+# Fork this repo and edit or add projects here to share them with your team.
+#
+# For personal projects that you don't want to commit, run:
+#   catherd project create <name>
+# which writes to projects.local/ (git-ignored).
+#
+# Then start an agent instance:
+#   catherd start example_project "your task here"
+
+name: example_project
+repo: git@github.com:example/example_project.git
+
+bootstrap:
+  - npm install
+
+agent:
+  command: claude
+  args: []
+
+dev:
+  start:
+    - npm run dev

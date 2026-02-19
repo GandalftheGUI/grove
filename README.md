@@ -88,18 +88,32 @@ dev:
     - npx expo start
 ```
 
-Place this file at `~/.catherdd/projects/my-app/project.yaml`.
+Place this file at `projects.local/my-app/project.yaml` (personal, git-ignored)
+or `projects/my-app/project.yaml` (shared, tracked by git), relative to the
+catherdd repo root.  Use `catherd project create <name>` to scaffold it.
 
 ---
 
 ## CLI reference
 
 ```
+# Project commands
+catherd project create <name> [--global] [--repo <url>] [--agent <cmd>]
+                               Define a new project
+catherd project list           List defined projects
+
+# Instance commands
 catherd start <project> "<task>"   Create and start a new agent instance
 catherd list                       List all instances and their states
+catherd watch                      Live dashboard (refreshes every second)
 catherd attach <id>                Attach your terminal to the instance PTY
-catherd logs <id>                  Print buffered output for an instance
+catherd logs <id> [-f]             Print buffered output for an instance
 catherd destroy <id>               Stop and remove an instance
+
+# Daemon commands
+catherd daemon install         Register catherdd as a login LaunchAgent
+catherd daemon uninstall       Remove the LaunchAgent
+catherd daemon status          Show whether the LaunchAgent is installed and running
 ```
 
 ### Attach / detach
@@ -116,17 +130,12 @@ catherd destroy <id>               Stop and remove an instance
 ## Example workflow
 
 ```bash
+# 0. Register the daemon (once, on macOS)
+catherd daemon install
+
 # 1. Define a project
-mkdir -p ~/.catherdd/projects/my-app
-cat > ~/.catherdd/projects/my-app/project.yaml <<'EOF'
-name: my-app
-repo: git@github.com:you/my-app.git
-bootstrap:
-  - npm install
-agent:
-  command: claude
-  args: []
-EOF
+catherd project create my-app --repo git@github.com:you/my-app.git
+# Edit projects.local/my-app/project.yaml to add bootstrap steps, then:
 
 # 2. Start an agent on a task
 catherd start my-app "add a dark mode toggle to the settings page"
@@ -149,10 +158,29 @@ catherd destroy a1b2c3d4
 
 ---
 
-## Auto-start
+## Daemon management (macOS LaunchAgent)
 
-`catherd` automatically starts `catherdd` in the background when needed.  You
-do not need to run the daemon manually.
+On macOS, PTY allocation requires running inside a full user login session.
+Register `catherdd` as a LaunchAgent so it starts automatically at login with
+the correct privileges:
+
+```bash
+catherd daemon install
+```
+
+This writes `~/Library/LaunchAgents/com.catherd.daemon.plist` and starts the
+daemon immediately.  Daemon output is written to `~/.catherdd/daemon.log`.
+
+```
+catherd daemon install     Register catherdd as a login LaunchAgent
+catherd daemon uninstall   Remove the LaunchAgent
+catherd daemon status      Show whether the LaunchAgent is installed and running
+```
+
+> **Note:** `catherd` will also auto-start the daemon on demand when you run
+> any command that requires it.  The LaunchAgent approach is preferred on
+> macOS because it avoids PTY permission errors that occur when launching a
+> detached background process directly.
 
 ---
 
