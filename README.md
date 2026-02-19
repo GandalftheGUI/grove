@@ -1,4 +1,4 @@
-# catherdd
+# CatHerdD
 
 A local daemon + CLI that supervises AI coding agents running in isolated Git
 worktrees on a single macOS machine.
