@@ -38,7 +38,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
-	"github.com/ianremillard/catherdd/internal/proto"
+	"github.com/ianremillard/grove/internal/proto"
 )
 
 const (
@@ -112,7 +112,7 @@ func (inst *Instance) Info() proto.InstanceInfo {
 	}
 }
 
-// persistMeta writes the instance metadata to ~/.catherdd/instances/<id>.json.
+// persistMeta writes the instance metadata to ~/.grove/instances/<id>.json.
 func (inst *Instance) persistMeta(instancesDir string) {
 	info := inst.Info()
 	data, _ := json.MarshalIndent(info, "", "  ")

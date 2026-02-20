@@ -1,6 +1,6 @@
-// Package daemon implements the catherdd background daemon.
+// Package daemon implements the groved background daemon.
 //
-// The daemon listens on a Unix domain socket and handles requests from catherd
+// The daemon listens on a Unix domain socket and handles requests from grove
 // clients.  Each request is a single newline-terminated JSON object; the daemon
 // writes a single newline-terminated JSON response and then closes the
 // connection — except for attach requests, which enter a bidirectional
@@ -25,20 +25,20 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ianremillard/catherdd/internal/proto"
+	"github.com/ianremillard/grove/internal/proto"
 )
 
 // Daemon is the central supervisor.  It owns a map of live instances and
-// handles all IPC requests from catherd.
+// handles all IPC requests from grove.
 type Daemon struct {
-	rootDir    string   // ~/.catherdd  (runtime data root)
+	rootDir    string   // ~/.grove  (runtime data root)
 	configDirs []string // ordered list of directories to search for project YAMLs
 
 	mu        sync.Mutex
 	instances map[string]*Instance // keyed by instance ID
 }
 
-// New creates a Daemon that uses rootDir (~/.catherdd) as its data directory.
+// New creates a Daemon that uses rootDir (~/.grove) as its data directory.
 // configDirs is the ordered list of directories to search for project.yaml
 // files (personal first, then global, then fallback).  If empty, the daemon
 // falls back to rootDir/projects/ for backward compatibility.
@@ -77,7 +77,7 @@ func (d *Daemon) Run(socketPath string) error {
 	}
 	defer l.Close()
 
-	log.Printf("catherdd listening on %s", socketPath)
+	log.Printf("groved listening on %s", socketPath)
 
 	for {
 		conn, err := l.Accept()
@@ -197,6 +197,26 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 	// Non-fatal: log the warning and continue so offline use still works.
 	if err := pullMain(p, setupW); err != nil {
 		log.Printf("warning: git pull failed for %s: %v", req.Project, err)
+	}
+
+	// Overlay .grove/project.yaml from inside the repo if it exists.
+	// This is the canonical config location — teams commit it alongside their
+	// code so any groved user gets the right bootstrap/agent/complete setup.
+	inRepoFound, err := loadInRepoConfig(p)
+	if err != nil {
+		log.Printf("warning: could not read in-repo config for %s: %v", req.Project, err)
+	}
+
+	// If there is no in-repo config and the registration has no agent command,
+	// the project is not configured enough to start.  Tell the client so it
+	// can prompt the user to create .grove/project.yaml.
+	if !inRepoFound && p.Agent.Command == "" {
+		respond(conn, proto.Response{
+			OK:       false,
+			Error:    "no .grove/project.yaml found in " + req.Project,
+			InitPath: p.MainDir(),
+		})
+		return
 	}
 
 	// Create the git worktree on the user-specified branch.

@@ -1,16 +1,16 @@
-// catherd – the CLI client for the catherdd daemon.
+// grove – the CLI client for the groved daemon.
 //
 // Usage:
 //
-//	catherd project create <name>      – define a new project
-//	catherd project list               – list defined projects
-//	catherd start <project> "<task>"   – create and start a new agent instance
-//	catherd list                       – list all instances
-//	catherd attach <instance-id>       – attach your terminal to an instance PTY
-//	catherd logs <instance-id>         – print buffered logs for an instance
-//	catherd destroy <instance-id>      – stop and remove an instance
+//	grove project create <name>      – define a new project
+//	grove project list               – list defined projects
+//	grove start <project> "<task>"   – create and start a new agent instance
+//	grove list                       – list all instances
+//	grove attach <instance-id>       – attach your terminal to an instance PTY
+//	grove logs <instance-id>         – print buffered logs for an instance
+//	grove destroy <instance-id>      – stop and remove an instance
 //
-// catherd will start the daemon automatically if it is not already running.
+// grove will start the daemon automatically if it is not already running.
 // Detach from an attached session with Ctrl-] (0x1D).
 package main
 
@@ -31,7 +31,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ianremillard/catherdd/internal/proto"
+	"github.com/ianremillard/grove/internal/proto"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
@@ -72,14 +72,14 @@ func main() {
 	case "daemon":
 		cmdDaemon()
 	default:
-		fmt.Fprintf(os.Stderr, "catherd: unknown command %q\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "grove: unknown command %q\n", os.Args[1])
 		usage()
 		os.Exit(1)
 	}
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `catherd – supervise AI coding agent instances
+	fmt.Fprintln(os.Stderr, `grove – supervise AI coding agent instances
 
 Project commands:
   project create <name> [--global] [--repo <url>] [--agent <cmd>]
@@ -101,7 +101,7 @@ Instance commands:
   worktree <instance-id>         Print the worktree path for an instance
 
 Daemon commands:
-  daemon install           Register catherdd as a login LaunchAgent
+  daemon install           Register groved as a login LaunchAgent
   daemon uninstall         Remove the LaunchAgent
   daemon status            Show whether the LaunchAgent is installed and running`)
 }
@@ -110,7 +110,7 @@ Daemon commands:
 
 func cmdProject() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: catherd project <create|list>")
+		fmt.Fprintln(os.Stderr, "usage: grove project <create|list>")
 		os.Exit(1)
 	}
 	switch os.Args[2] {
@@ -119,19 +119,19 @@ func cmdProject() {
 	case "list":
 		cmdProjectList()
 	default:
-		fmt.Fprintf(os.Stderr, "catherd: unknown project subcommand %q\n", os.Args[2])
+		fmt.Fprintf(os.Stderr, "grove: unknown project subcommand %q\n", os.Args[2])
 		os.Exit(1)
 	}
 }
 
-// cmdProjectCreate handles: catherd project create <name> [--global] [--repo <url>] [--agent <cmd>]
+// cmdProjectCreate handles: grove project create <name> [--global] [--repo <url>] [--agent <cmd>]
 //
 // By default the project.yaml is written to projects.local/<name>/ (personal,
 // git-ignored).  Pass --global to write to projects/<name>/ instead (tracked).
 // This is a pure filesystem operation — no daemon required.
 func cmdProjectCreate() {
 	if len(os.Args) < 4 || os.Args[3] == "" || os.Args[3][0] == '-' {
-		fmt.Fprintln(os.Stderr, "usage: catherd project create <name> [--global] [--repo <url>] [--agent <cmd>]")
+		fmt.Fprintln(os.Stderr, "usage: grove project create <name> [--global] [--repo <url>] [--agent <cmd>]")
 		os.Exit(1)
 	}
 	name := os.Args[3]
@@ -141,7 +141,7 @@ func cmdProjectCreate() {
 	repo := fs.String("repo", "", "git remote URL (can be added later)")
 	agent := fs.String("agent", "claude", "agent command to run inside the worktree")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: catherd project create <name> [--global] [--repo <url>] [--agent <cmd>]")
+		fmt.Fprintln(os.Stderr, "usage: grove project create <name> [--global] [--repo <url>] [--agent <cmd>]")
 		fs.PrintDefaults()
 	}
 	fs.Parse(os.Args[4:])
@@ -159,38 +159,38 @@ func cmdProjectCreate() {
 			targetDir = filepath.Join(root, "projects.local")
 		}
 	}
-	// Fall back to ~/.catherdd/projects/ if we can't find the repo root
-	// (e.g., catherd installed system-wide).
+	// Fall back to ~/.grove/projects/ if we can't find the repo root
+	// (e.g., grove installed system-wide).
 	if targetDir == "" {
 		targetDir = filepath.Join(rootDir(), "projects")
 	}
 
 	projectDir := filepath.Join(targetDir, name)
 	if _, err := os.Stat(projectDir); err == nil {
-		fmt.Fprintf(os.Stderr, "catherd: project %q already exists at %s\n", name, projectDir)
+		fmt.Fprintf(os.Stderr, "grove: project %q already exists at %s\n", name, projectDir)
 		os.Exit(1)
 	}
 	// MkdirAll creates projects.local/ automatically if it doesn't exist yet.
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "catherd: %v\n", err)
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
 		os.Exit(1)
 	}
 
 	yamlPath := filepath.Join(projectDir, "project.yaml")
-	content := fmt.Sprintf("name: %s\nrepo: %s\n\nbootstrap: []\n\nagent:\n  command: %s\n  args: []\n\ndev:\n  start: []\n\n# complete: commands run by `catherd finish`. Use {{branch}} for the branch name.\ncomplete:\n  - git push -u origin {{branch}}\n  # - gh pr create --title \"{{branch}}\" --fill\n",
+	content := fmt.Sprintf("name: %s\nrepo: %s\n\nbootstrap: []\n\nagent:\n  command: %s\n  args: []\n\ndev:\n  start: []\n\n# complete: commands run by `grove finish`. Use {{branch}} for the branch name.\ncomplete:\n  - git push -u origin {{branch}}\n  # - gh pr create --title \"{{branch}}\" --fill\n",
 		name, *repo, *agent)
 	if err := os.WriteFile(yamlPath, []byte(content), 0o644); err != nil {
-		fmt.Fprintf(os.Stderr, "catherd: %v\n", err)
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
 		os.Exit(1)
 	}
 
 	fmt.Printf("created project %q\n", name)
 	fmt.Printf("config: %s\n", yamlPath)
 	fmt.Println("edit the file to set your repo URL and bootstrap steps, then run:")
-	fmt.Printf("  catherd start %s <branch>\n", name)
+	fmt.Printf("  grove start %s <branch>\n", name)
 }
 
-// cmdProjectList handles: catherd project list
+// cmdProjectList handles: grove project list
 //
 // Scans all config directories (personal → global → home) and prints a summary
 // table.  Projects with the same name in multiple dirs are deduplicated (the
@@ -262,12 +262,12 @@ func cmdStart() {
 	detach := fs.Bool("detach", false, "do not attach after starting")
 	fs.BoolVar(detach, "d", false, "do not attach after starting")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: catherd start <project> <branch> [-d]")
+		fmt.Fprintln(os.Stderr, "usage: grove start <project> <branch> [-d]")
 	}
 	fs.Parse(os.Args[2:])
 	args := fs.Args()
 	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: catherd start <project> <branch> [-d]")
+		fmt.Fprintln(os.Stderr, "usage: grove start <project> <branch> [-d]")
 		os.Exit(1)
 	}
 	project := args[0]
@@ -276,7 +276,7 @@ func cmdStart() {
 	socketPath := daemonSocket()
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "catherd: %v\n", err)
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -286,18 +286,24 @@ func cmdStart() {
 		Branch:  branch,
 	}); err != nil {
 		conn.Close()
-		fmt.Fprintf(os.Stderr, "catherd: %v\n", err)
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
 		os.Exit(1)
 	}
 
 	resp, err := readResponse(conn)
-	if err != nil || !resp.OK {
+	if err != nil {
 		conn.Close()
-		msg := resp.Error
-		if msg == "" && err != nil {
-			msg = err.Error()
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
+		os.Exit(1)
+	}
+	if !resp.OK {
+		conn.Close()
+		if resp.InitPath != "" {
+			// Project exists but has no .grove/project.yaml — prompt the user.
+			promptCreateProjectConfig(resp.InitPath, project)
+			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stderr, "catherd: %s\n", msg)
+		fmt.Fprintf(os.Stderr, "grove: %s\n", resp.Error)
 		os.Exit(1)
 	}
 
@@ -312,11 +318,115 @@ func cmdStart() {
 	}
 }
 
+// promptCreateProjectConfig is called when the daemon reports that the project
+// has no .grove/project.yaml in its repository.  It asks the user whether to
+// create a boilerplate file, writes it if they agree, then exits with
+// instructions to edit, commit, and re-run.
+func promptCreateProjectConfig(mainDir, projectName string) {
+	configPath := filepath.Join(mainDir, ".grove", "project.yaml")
+	fmt.Printf("No .grove/project.yaml found in %s.\n\n", projectName)
+	fmt.Printf("Commit this file to your repo so any groved user gets the\n")
+	fmt.Printf("same bootstrap, agent, and completion steps automatically.\n\n")
+	fmt.Print("Create a boilerplate now? [Y/n] ")
+
+	reader := bufio.NewReader(os.Stdin)
+	answer, _ := reader.ReadString('\n')
+	answer = strings.TrimSpace(answer)
+	if answer != "" && answer != "y" && answer != "Y" {
+		fmt.Println("aborted")
+		return
+	}
+
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
+		return
+	}
+	if err := os.WriteFile(configPath, []byte(projectConfigBoilerplate), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
+		return
+	}
+
+	fmt.Printf("\nCreated %s\n\n", configPath)
+	fmt.Println("Next steps:")
+	fmt.Printf("  1. Edit the file to match your project\n")
+	fmt.Printf("  2. Commit it:  git -C %s add .grove/project.yaml && git -C %s commit -m 'Add grove project config'\n", mainDir, mainDir)
+	fmt.Printf("  3. Re-run:     grove start %s <branch>\n", projectName)
+}
+
+// projectConfigBoilerplate is written to .grove/project.yaml when a project
+// has none.  It is designed to be self-explanatory with enough comments and
+// examples that a developer can configure it without reading external docs.
+const projectConfigBoilerplate = `# .grove/project.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Grove project configuration.
+# Commit this file so everyone using Grove gets the same setup automatically.
+# https://github.com/ianremillard/grove
+# ─────────────────────────────────────────────────────────────────────────────
+name: my-project
+
+# ── Bootstrap ─────────────────────────────────────────────────────────────────
+# Commands run once in each fresh worktree before the agent starts.
+# The working directory is the worktree root.
+#
+# Best practice: delegate to an existing setup script so the logic lives in one
+# place and can be run and tested independently of groved.
+#
+# Examples:
+#   - ./scripts/bootstrap.sh        ← recommended if you have one
+#   - make setup
+#   - npm install
+#   - pip install -r requirements.txt && pre-commit install
+#   - bundle install
+bootstrap:
+  - ./scripts/bootstrap.sh
+
+# ── Agent ─────────────────────────────────────────────────────────────────────
+# The AI coding agent to run inside each worktree PTY.
+# 'grove attach' and 'grove start' connect your terminal directly to it.
+#
+# Common values:
+#   claude   – Claude Code  (https://claude.ai/code)
+#   aider    – Aider        (https://aider.chat)
+#   sh       – plain shell  (useful for testing without an agent)
+agent:
+  command: claude
+  args: []
+
+# ── Complete ──────────────────────────────────────────────────────────────────
+# Commands run by 'grove finish <id>' inside the worktree directory.
+# The daemon executes these — they complete even if you close your terminal.
+# Use {{branch}} as a placeholder for the instance's branch name.
+#
+# The instance is marked FINISHED before these run, so a disconnection mid-way
+# does not leave it in a broken state; output is preserved in the instance log.
+#
+# Tip: for anything beyond a simple push, delegate to a script so you can test
+# the completion flow independently.
+#
+#   - ./scripts/complete.sh {{branch}}
+#
+complete:
+  # Push the branch to the remote.
+  - git push -u origin {{branch}}
+
+  # Open a pull request (requires GitHub CLI: https://cli.github.com).
+  # - gh pr create --title "{{branch}}" --fill
+
+  # Or push, open a PR, squash-merge, and delete the branch in one step.
+  # - git push -u origin {{branch}} && gh pr create --title "{{branch}}" --fill && gh pr merge --squash --delete-branch
+
+# ── Dev servers ───────────────────────────────────────────────────────────────
+# Commands to start development servers alongside the agent.
+# (Reserved for future use — not yet implemented.)
+dev:
+  start: []
+`
+
 func cmdList() {
 	fs := flag.NewFlagSet("list", flag.ExitOnError)
 	activeOnly := fs.Bool("active", false, "show only active instances (exclude FINISHED)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: catherd list [--active]")
+		fmt.Fprintln(os.Stderr, "usage: grove list [--active]")
 	}
 	fs.Parse(os.Args[2:])
 
@@ -349,7 +459,7 @@ func cmdList() {
 
 func cmdAttach() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: catherd attach <instance-id>")
+		fmt.Fprintln(os.Stderr, "usage: grove attach <instance-id>")
 		os.Exit(1)
 	}
 	doAttach(os.Args[2])
@@ -361,7 +471,7 @@ func doAttach(instanceID string) {
 	socketPath := daemonSocket()
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "catherd: cannot connect to daemon: %v\n", err)
+		fmt.Fprintf(os.Stderr, "grove: cannot connect to daemon: %v\n", err)
 		os.Exit(1)
 	}
 	// Note: conn is NOT deferred-closed here; the attach loop owns its lifetime.
@@ -370,7 +480,7 @@ func doAttach(instanceID string) {
 		Type:       proto.ReqAttach,
 		InstanceID: instanceID,
 	}); err != nil {
-		fmt.Fprintf(os.Stderr, "catherd: %v\n", err)
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -382,7 +492,7 @@ func doAttach(instanceID string) {
 		} else if resp.Error != "" {
 			msg = resp.Error
 		}
-		fmt.Fprintf(os.Stderr, "catherd: %s\n", msg)
+		fmt.Fprintf(os.Stderr, "grove: %s\n", msg)
 		conn.Close()
 		os.Exit(1)
 	}
@@ -390,7 +500,7 @@ func doAttach(instanceID string) {
 	fd := int(os.Stdin.Fd())
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "catherd: cannot set raw mode: %v\n", err)
+		fmt.Fprintf(os.Stderr, "grove: cannot set raw mode: %v\n", err)
 		conn.Close()
 		os.Exit(1)
 	}
@@ -400,7 +510,7 @@ func doAttach(instanceID string) {
 	}
 	defer restore()
 
-	fmt.Fprintf(os.Stdout, "\r\n[catherd] attached to %s  (detach: Ctrl-])\r\n", instanceID)
+	fmt.Fprintf(os.Stdout, "\r\n[grove] attached to %s  (detach: Ctrl-])\r\n", instanceID)
 
 	done := make(chan struct{}, 1)
 
@@ -470,7 +580,7 @@ func doAttach(instanceID string) {
 
 	restore()
 	defer func() {}() // suppress second restore() from defer
-	fmt.Fprintf(os.Stdout, "\n[catherd] detached from %s\n", instanceID)
+	fmt.Fprintf(os.Stdout, "\n[grove] detached from %s\n", instanceID)
 }
 
 func cmdLogs() {
@@ -478,12 +588,12 @@ func cmdLogs() {
 	follow := fs.Bool("f", false, "follow log output")
 	fs.BoolVar(follow, "follow", false, "follow log output")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: catherd logs <instance-id> [-f]")
+		fmt.Fprintln(os.Stderr, "usage: grove logs <instance-id> [-f]")
 	}
 	fs.Parse(os.Args[2:])
 	remaining := fs.Args()
 	if len(remaining) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: catherd logs <instance-id> [-f]")
+		fmt.Fprintln(os.Stderr, "usage: grove logs <instance-id> [-f]")
 		os.Exit(1)
 	}
 	instanceID := remaining[0]
@@ -496,13 +606,13 @@ func cmdLogs() {
 	socketPath := daemonSocket()
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "catherd: cannot connect to daemon: %v\n", err)
+		fmt.Fprintf(os.Stderr, "grove: cannot connect to daemon: %v\n", err)
 		os.Exit(1)
 	}
 	defer conn.Close()
 
 	if err := writeRequest(conn, proto.Request{Type: reqType, InstanceID: instanceID}); err != nil {
-		fmt.Fprintf(os.Stderr, "catherd: %v\n", err)
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
 		os.Exit(1)
 	}
 	resp, err := readResponse(conn)
@@ -511,7 +621,7 @@ func cmdLogs() {
 		if resp.Error != "" {
 			msg = resp.Error
 		}
-		fmt.Fprintf(os.Stderr, "catherd: %s\n", msg)
+		fmt.Fprintf(os.Stderr, "grove: %s\n", msg)
 		os.Exit(1)
 	}
 	io.Copy(os.Stdout, conn)
@@ -649,7 +759,7 @@ func formatUptime(secs int64) string {
 
 func cmdStop() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: catherd stop <instance-id>")
+		fmt.Fprintln(os.Stderr, "usage: grove stop <instance-id>")
 		os.Exit(1)
 	}
 	instanceID := os.Args[2]
@@ -667,12 +777,12 @@ func cmdRestart() {
 	detach := fs.Bool("detach", false, "do not attach after restarting")
 	fs.BoolVar(detach, "d", false, "do not attach after restarting")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: catherd restart <instance-id> [-d]")
+		fmt.Fprintln(os.Stderr, "usage: grove restart <instance-id> [-d]")
 	}
 	fs.Parse(os.Args[2:])
 	args := fs.Args()
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: catherd restart <instance-id> [-d]")
+		fmt.Fprintln(os.Stderr, "usage: grove restart <instance-id> [-d]")
 		os.Exit(1)
 	}
 	instanceID := args[0]
@@ -691,7 +801,7 @@ func cmdRestart() {
 
 func cmdDrop() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: catherd drop <instance-id>")
+		fmt.Fprintln(os.Stderr, "usage: grove drop <instance-id>")
 		os.Exit(1)
 	}
 	instanceID := os.Args[2]
@@ -706,7 +816,7 @@ func cmdDrop() {
 		}
 	}
 	if found == nil {
-		fmt.Fprintf(os.Stderr, "catherd: instance not found: %s\n", instanceID)
+		fmt.Fprintf(os.Stderr, "grove: instance not found: %s\n", instanceID)
 		os.Exit(1)
 	}
 
@@ -731,7 +841,7 @@ func cmdDrop() {
 
 func cmdFinish() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: catherd finish <instance-id>")
+		fmt.Fprintln(os.Stderr, "usage: grove finish <instance-id>")
 		os.Exit(1)
 	}
 	instanceID := os.Args[2]
@@ -739,13 +849,13 @@ func cmdFinish() {
 	socketPath := daemonSocket()
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "catherd: %v\n", err)
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
 		os.Exit(1)
 	}
 	defer conn.Close()
 
 	if err := writeRequest(conn, proto.Request{Type: proto.ReqFinish, InstanceID: instanceID}); err != nil {
-		fmt.Fprintf(os.Stderr, "catherd: %v\n", err)
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -755,7 +865,7 @@ func cmdFinish() {
 		if msg == "" && err != nil {
 			msg = err.Error()
 		}
-		fmt.Fprintf(os.Stderr, "catherd: %s\n", msg)
+		fmt.Fprintf(os.Stderr, "grove: %s\n", msg)
 		os.Exit(1)
 	}
 
@@ -765,7 +875,7 @@ func cmdFinish() {
 
 func cmdMain() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: catherd main <project>")
+		fmt.Fprintln(os.Stderr, "usage: grove main <project>")
 		os.Exit(1)
 	}
 	project := os.Args[2]
@@ -774,7 +884,7 @@ func cmdMain() {
 
 func cmdWorktree() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: catherd worktree <instance-id>")
+		fmt.Fprintln(os.Stderr, "usage: grove worktree <instance-id>")
 		os.Exit(1)
 	}
 	id := os.Args[2]
@@ -786,7 +896,7 @@ func cmdWorktree() {
 			return
 		}
 	}
-	fmt.Fprintf(os.Stderr, "catherd: instance not found: %s\n", id)
+	fmt.Fprintf(os.Stderr, "grove: instance not found: %s\n", id)
 	os.Exit(1)
 }
 
@@ -794,7 +904,7 @@ func cmdPrune() {
 	fs := flag.NewFlagSet("prune", flag.ExitOnError)
 	includeFinished := fs.Bool("finished", false, "also drop FINISHED instances")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: catherd prune [--finished]")
+		fmt.Fprintln(os.Stderr, "usage: grove prune [--finished]")
 	}
 	fs.Parse(os.Args[2:])
 
@@ -838,7 +948,7 @@ func cmdPrune() {
 
 // ─── Daemon install/uninstall/status ─────────────────────────────────────────
 
-const launchAgentLabel = "com.catherd.daemon"
+const launchAgentLabel = "com.grove.daemon"
 
 func launchAgentPlistPath() string {
 	home, _ := os.UserHomeDir()
@@ -847,7 +957,7 @@ func launchAgentPlistPath() string {
 
 func cmdDaemon() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: catherd daemon <install|uninstall|status>")
+		fmt.Fprintln(os.Stderr, "usage: grove daemon <install|uninstall|status>")
 		os.Exit(1)
 	}
 	switch os.Args[2] {
@@ -858,7 +968,7 @@ func cmdDaemon() {
 	case "status":
 		cmdDaemonStatus()
 	default:
-		fmt.Fprintf(os.Stderr, "catherd: unknown daemon subcommand %q\n", os.Args[2])
+		fmt.Fprintf(os.Stderr, "grove: unknown daemon subcommand %q\n", os.Args[2])
 		os.Exit(1)
 	}
 }
@@ -866,12 +976,12 @@ func cmdDaemon() {
 func cmdDaemonInstall() {
 	exe, err := os.Executable()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "catherd: cannot resolve executable path: %v\n", err)
+		fmt.Fprintf(os.Stderr, "grove: cannot resolve executable path: %v\n", err)
 		os.Exit(1)
 	}
-	daemonBin := filepath.Join(filepath.Dir(exe), "catherdd")
+	daemonBin := filepath.Join(filepath.Dir(exe), "groved")
 	if _, err := os.Stat(daemonBin); err != nil {
-		fmt.Fprintf(os.Stderr, "catherd: catherdd binary not found at %s\n", daemonBin)
+		fmt.Fprintf(os.Stderr, "grove: groved binary not found at %s\n", daemonBin)
 		os.Exit(1)
 	}
 
@@ -883,11 +993,11 @@ func cmdDaemonInstall() {
 
 	plistPath := launchAgentPlistPath()
 	if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "catherd: %v\n", err)
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
 		os.Exit(1)
 	}
 	if err := os.WriteFile(plistPath, []byte(plist), 0o644); err != nil {
-		fmt.Fprintf(os.Stderr, "catherd: %v\n", err)
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -898,11 +1008,11 @@ func cmdDaemonInstall() {
 	// Load the new plist.
 	out, err := exec.Command("launchctl", "bootstrap", "gui/"+uid, plistPath).CombinedOutput()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "catherd: launchctl bootstrap failed: %v\n%s", err, out)
+		fmt.Fprintf(os.Stderr, "grove: launchctl bootstrap failed: %v\n%s", err, out)
 		os.Exit(1)
 	}
 
-	fmt.Printf("catherdd LaunchAgent installed\nplist:  %s\nlog:    %s\n", plistPath, logFile)
+	fmt.Printf("groved LaunchAgent installed\nplist:  %s\nlog:    %s\n", plistPath, logFile)
 }
 
 func cmdDaemonUninstall() {
@@ -912,7 +1022,7 @@ func cmdDaemonUninstall() {
 	plistPath := launchAgentPlistPath()
 	os.Remove(plistPath)
 
-	fmt.Println("catherdd LaunchAgent removed")
+	fmt.Println("groved LaunchAgent removed")
 }
 
 func cmdDaemonStatus() {
@@ -923,7 +1033,7 @@ func cmdDaemonStatus() {
 	}
 
 	root := rootDir()
-	sock := filepath.Join(root, "catherdd.sock")
+	sock := filepath.Join(root, "groved.sock")
 	if pingDaemon(sock) {
 		fmt.Printf("running\nplist: %s\n", plistPath)
 	} else {
@@ -995,8 +1105,8 @@ func xmlEscape(s string) string {
 
 // ─── Project directory helpers ────────────────────────────────────────────────
 
-// repoRoot returns the directory one level above the catherd binary, which is
-// the repo root when running from a local checkout (bin/catherd → repo/).
+// repoRoot returns the directory one level above the grove binary, which is
+// the repo root when running from a local checkout (bin/grove → repo/).
 // Returns an empty string if the executable path cannot be determined.
 func repoRoot() string {
 	exe, err := os.Executable()
@@ -1028,11 +1138,11 @@ func repoProjDirs() (personal, global string) {
 // configDirEntry pairs a filesystem path with a human-readable label.
 type configDirEntry struct {
 	path  string
-	label string // "personal", "global", or "" for the ~/.catherdd fallback
+	label string // "personal", "global", or "" for the ~/.grove fallback
 }
 
 // allConfigDirEntries returns every project config directory in priority order:
-// personal repo dir → global repo dir → ~/.catherdd/projects fallback.
+// personal repo dir → global repo dir → ~/.grove/projects fallback.
 func allConfigDirEntries() []configDirEntry {
 	personal, global := repoProjDirs()
 	var entries []configDirEntry
@@ -1057,10 +1167,10 @@ func configDirPaths() []string {
 
 // ─── Daemon connection helpers ────────────────────────────────────────────────
 
-// rootDir returns the catherdd data directory.
-// Precedence: CATHERDD_ROOT env var > ~/.catherdd
+// rootDir returns the groved data directory.
+// Precedence: GROVE_ROOT env var > ~/.grove
 func rootDir() string {
-	if env := os.Getenv("CATHERDD_ROOT"); env != "" {
+	if env := os.Getenv("GROVE_ROOT"); env != "" {
 		abs, err := filepath.Abs(env)
 		if err == nil {
 			return abs
@@ -1068,35 +1178,38 @@ func rootDir() string {
 		return env
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".catherdd")
+	return filepath.Join(home, ".grove")
 }
 
 // daemonSocket returns the Unix socket path and ensures the daemon is running.
 func daemonSocket() string {
 	root := rootDir()
-	sock := filepath.Join(root, "catherdd.sock")
+	sock := filepath.Join(root, "groved.sock")
 	ensureDaemon(root, sock)
 	return sock
 }
 
-// ensureDaemon starts catherdd in the background if the socket doesn't exist
+// ensureDaemon starts groved in the background if the socket doesn't exist
 // or is not responding to pings.  root is passed via --root so the daemon
-// uses the same data directory that catherd is targeting.
+// uses the same data directory that grove is targeting.
 func ensureDaemon(root, socketPath string) {
 	if pingDaemon(socketPath) {
 		return
 	}
 
-	// Find the catherdd binary next to the current executable.
+	// Find the groved binary next to the current executable.
 	exe, _ := os.Executable()
-	daemonBin := filepath.Join(filepath.Dir(exe), "catherdd")
+	daemonBin := filepath.Join(filepath.Dir(exe), "groved")
 	if _, err := os.Stat(daemonBin); err != nil {
 		// Fall back to PATH.
-		daemonBin = "catherdd"
+		daemonBin = "groved"
 	}
 
 	// Build argument list: --root <dir> [--projects-dir <dir> ...]
+	// Always include <root>/projects so registrations written via
+	// `grove project create` to ~/.grove/projects/ are found.
 	args := []string{"--root", root}
+	args = append(args, "--projects-dir", filepath.Join(root, "projects"))
 	for _, dir := range configDirPaths() {
 		args = append(args, "--projects-dir", dir)
 	}
@@ -1106,7 +1219,7 @@ func ensureDaemon(root, socketPath string) {
 	cmd.Stderr = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "catherd: could not start daemon: %v\n", err)
+		fmt.Fprintf(os.Stderr, "grove: could not start daemon: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -1118,7 +1231,7 @@ func ensureDaemon(root, socketPath string) {
 		}
 	}
 
-	fmt.Fprintln(os.Stderr, "catherd: daemon did not start in time")
+	fmt.Fprintln(os.Stderr, "grove: daemon did not start in time")
 	os.Exit(1)
 }
 
@@ -1144,23 +1257,23 @@ func mustRequest(req proto.Request) proto.Response {
 	socketPath := daemonSocket()
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "catherd: %v\n", err)
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
 		os.Exit(1)
 	}
 	defer conn.Close()
 
 	if err := writeRequest(conn, req); err != nil {
-		fmt.Fprintf(os.Stderr, "catherd: %v\n", err)
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
 		os.Exit(1)
 	}
 
 	resp, err := readResponse(conn)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "catherd: %v\n", err)
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
 		os.Exit(1)
 	}
 	if !resp.OK {
-		fmt.Fprintf(os.Stderr, "catherd: %s\n", resp.Error)
+		fmt.Fprintf(os.Stderr, "grove: %s\n", resp.Error)
 		os.Exit(1)
 	}
 	return resp

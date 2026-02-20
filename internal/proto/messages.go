@@ -1,5 +1,5 @@
 // Package proto defines the IPC message types and attach-stream framing
-// used between catherd (client) and catherdd (daemon) over a Unix domain socket.
+// used between grove (client) and groved (daemon) over a Unix domain socket.
 //
 // Normal commands use newline-delimited JSON: client sends one Request,
 // daemon sends one Response, then the connection closes.
@@ -40,7 +40,7 @@ const (
 	StateFinished = "FINISHED"
 )
 
-// Request is the JSON payload sent from catherd to catherdd.
+// Request is the JSON payload sent from grove to groved.
 type Request struct {
 	Type       string `json:"type"`
 	Project    string `json:"project,omitempty"`
@@ -70,6 +70,11 @@ type Response struct {
 	// Fields used by ReqFinish response.
 	WorktreeDir string `json:"worktree_dir,omitempty"`
 	Branch      string `json:"branch,omitempty"`
+
+	// InitPath is set when the daemon cannot start an instance because the
+	// project has no .grove/project.yaml in its repository.  The client
+	// should prompt the user and write a boilerplate file here.
+	InitPath string `json:"init_path,omitempty"`
 }
 
 // ─── Attach stream framing ────────────────────────────────────────────────────

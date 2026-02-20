@@ -4,11 +4,11 @@
 # Fork this repo and edit or add projects here to share them with your team.
 #
 # For personal projects that you don't want to commit, run:
-#   catherd project create <name>
+#   grove project create <name>
 # which writes to projects.local/ (git-ignored).
 #
 # Then start an agent instance on a branch:
-#   catherd start example_project feat/my-feature
+#   grove start example_project feat/my-feature
 
 name: example_project
 repo: git@github.com:example/example_project.git
@@ -24,7 +24,7 @@ dev:
   start:
     - npm run dev
 
-# complete: commands run when you call `catherd finish <id>`.
+# complete: commands run when you call `grove finish <id>`.
 # They execute inside the worktree. Use {{branch}} for the branch name.
 # Uncomment and adapt the steps you want.
 complete:

@@ -28,7 +28,7 @@ type Project struct {
 	} `yaml:"dev"`
 
 	// ConfigDir is the directory that contains the project.yaml (may be inside
-	// the repo's projects/ or projects.local/ tree, or in ~/.catherdd/projects/).
+	// the repo's projects/ or projects.local/ tree, or in ~/.grove/projects/).
 	ConfigDir string `yaml:"-"`
 
 	// DataDir is where runtime data lives (canonical clone, worktrees).
@@ -157,6 +157,44 @@ func removeWorktree(p *Project, instanceID, branchName string) {
 
 	// git branch -D <branch>
 	exec.Command("git", "-C", mainDir, "branch", "-D", branchName).Run()
+}
+
+// loadInRepoConfig reads .grove/project.yaml from the project's main clone
+// and overlays its fields onto p.  In-repo config takes precedence over the
+// registration so teams can commit authoritative settings alongside their code.
+//
+// Returns (true, nil) if the file was found and applied, (false, nil) if it
+// does not exist, or (false, err) on a parse error.
+func loadInRepoConfig(p *Project) (bool, error) {
+	inRepoPath := filepath.Join(p.MainDir(), ".grove", "project.yaml")
+	data, err := os.ReadFile(inRepoPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("read .grove/project.yaml: %w", err)
+	}
+
+	var overlay Project
+	if err := yaml.Unmarshal(data, &overlay); err != nil {
+		return false, fmt.Errorf("parse .grove/project.yaml: %w", err)
+	}
+
+	// Overlay: in-repo values win over the registration for each field present.
+	if len(overlay.Bootstrap) > 0 {
+		p.Bootstrap = overlay.Bootstrap
+	}
+	if overlay.Agent.Command != "" {
+		p.Agent = overlay.Agent
+	}
+	if len(overlay.Complete) > 0 {
+		p.Complete = overlay.Complete
+	}
+	if len(overlay.Dev.Start) > 0 {
+		p.Dev = overlay.Dev
+	}
+
+	return true, nil
 }
 
 // runBootstrap executes the project bootstrap commands sequentially in dir.

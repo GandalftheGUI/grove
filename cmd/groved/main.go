@@ -1,12 +1,12 @@
-// catherdd – the background daemon that supervises AI coding agent instances.
+// groved – the background daemon that supervises AI coding agent instances.
 //
 // Usage:
 //
-//	catherdd [--root <dir>]
+//	groved [--root <dir>]
 //
-// The daemon listens on a Unix domain socket at <root>/catherdd.sock and
-// handles commands from the catherd CLI.  It is normally started automatically
-// by catherd; you do not need to run it by hand.
+// The daemon listens on a Unix domain socket at <root>/groved.sock and
+// handles commands from the grove CLI.  It is normally started automatically
+// by grove; you do not need to run it by hand.
 package main
 
 import (
@@ -17,7 +17,7 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/ianremillard/catherdd/internal/daemon"
+	"github.com/ianremillard/grove/internal/daemon"
 )
 
 // stringSlice is a repeatable string flag (--projects-dir a --projects-dir b).
@@ -34,14 +34,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("cannot determine home directory: %v", err)
 	}
-	defaultRoot := filepath.Join(homeDir, ".catherdd")
-	// CATHERDD_ROOT env var overrides the default so users can point at a
-	// local test directory without touching ~/.catherdd.
-	if env := os.Getenv("CATHERDD_ROOT"); env != "" {
+	defaultRoot := filepath.Join(homeDir, ".grove")
+	// GROVE_ROOT env var overrides the default so users can point at a
+	// local test directory without touching ~/.grove.
+	if env := os.Getenv("GROVE_ROOT"); env != "" {
 		defaultRoot = env
 	}
 
-	rootDir := flag.String("root", defaultRoot, "catherdd data directory (env: CATHERDD_ROOT)")
+	rootDir := flag.String("root", defaultRoot, "groved data directory (env: GROVE_ROOT)")
 	var projectsDirs stringSlice
 	flag.Var(&projectsDirs, "projects-dir", "project config directory to search (may be repeated; personal before global)")
 	flag.Parse()
@@ -51,7 +51,7 @@ func main() {
 		log.Fatalf("daemon init: %v", err)
 	}
 
-	socketPath := filepath.Join(*rootDir, "catherdd.sock")
+	socketPath := filepath.Join(*rootDir, "groved.sock")
 
 	// Graceful shutdown on SIGINT / SIGTERM.
 	sigCh := make(chan os.Signal, 1)

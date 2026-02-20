@@ -1,4 +1,4 @@
-module github.com/ianremillard/catherdd
+module github.com/ianremillard/grove
 
 go 1.22
 
