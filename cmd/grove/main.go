@@ -82,8 +82,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `grove – supervise AI coding agent instances
 
 Project commands:
-  project create <name> [--repo <url>] [--agent <cmd>]
-                           Define a new project
+  project create <name> [--repo <url>]
+                           Register a new project (name + repo URL)
   project list             List defined projects
   main <project>           Print the main checkout path for a project
 
@@ -124,22 +124,22 @@ func cmdProject() {
 	}
 }
 
-// cmdProjectCreate handles: grove project create <name> [--repo <url>] [--agent <cmd>]
+// cmdProjectCreate handles: grove project create <name> [--repo <url>]
 //
-// Writes the project registration to ~/.grove/projects/<name>/project.yaml.
-// This is a pure filesystem operation — no daemon required.
+// Writes a minimal registration (name + repo URL) to
+// ~/.grove/projects/<name>/project.yaml. All other config (bootstrap, agent,
+// complete) belongs in the project repo's own .grove/project.yaml.
 func cmdProjectCreate() {
 	if len(os.Args) < 4 || os.Args[3] == "" || os.Args[3][0] == '-' {
-		fmt.Fprintln(os.Stderr, "usage: grove project create <name> [--repo <url>] [--agent <cmd>]")
+		fmt.Fprintln(os.Stderr, "usage: grove project create <name> [--repo <url>]")
 		os.Exit(1)
 	}
 	name := os.Args[3]
 
 	fs := flag.NewFlagSet("project create", flag.ExitOnError)
 	repo := fs.String("repo", "", "git remote URL (can be added later)")
-	agent := fs.String("agent", "claude", "agent command to run inside the worktree")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: grove project create <name> [--repo <url>] [--agent <cmd>]")
+		fmt.Fprintln(os.Stderr, "usage: grove project create <name> [--repo <url>]")
 		fs.PrintDefaults()
 	}
 	fs.Parse(os.Args[4:])
@@ -155,8 +155,7 @@ func cmdProjectCreate() {
 	}
 
 	yamlPath := filepath.Join(projectDir, "project.yaml")
-	content := fmt.Sprintf("name: %s\nrepo: %s\n\nbootstrap: []\n\nagent:\n  command: %s\n  args: []\n\ndev:\n  start: []\n\n# complete: commands run by `grove finish`. Use {{branch}} for the branch name.\ncomplete:\n  - git push -u origin {{branch}}\n  # - gh pr create --title \"{{branch}}\" --fill\n",
-		name, *repo, *agent)
+	content := fmt.Sprintf("name: %s\nrepo: %s\n", name, *repo)
 	if err := os.WriteFile(yamlPath, []byte(content), 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
 		os.Exit(1)
@@ -164,7 +163,11 @@ func cmdProjectCreate() {
 
 	fmt.Printf("created project %q\n", name)
 	fmt.Printf("config: %s\n", yamlPath)
-	fmt.Println("edit the file to set your repo URL and bootstrap steps, then run:")
+	if *repo == "" {
+		fmt.Println("edit the file to set your repo URL, then run:")
+	} else {
+		fmt.Println("run:")
+	}
 	fmt.Printf("  grove start %s <branch>\n", name)
 }
 
@@ -173,7 +176,7 @@ func cmdProjectCreate() {
 // Scans ~/.grove/projects/ and prints a summary table.
 // This is a pure filesystem operation — no daemon required.
 func cmdProjectList() {
-	type row struct{ name, repo, agent string }
+	type row struct{ name, repo string }
 	var rows []row
 
 	projectsDir := filepath.Join(rootDir(), "projects")
@@ -192,11 +195,8 @@ func cmdProjectList() {
 			continue
 		}
 		var p struct {
-			Name  string `yaml:"name"`
-			Repo  string `yaml:"repo"`
-			Agent struct {
-				Command string `yaml:"command"`
-			} `yaml:"agent"`
+			Name string `yaml:"name"`
+			Repo string `yaml:"repo"`
 		}
 		if err := yaml.Unmarshal(data, &p); err != nil {
 			continue
@@ -209,11 +209,7 @@ func cmdProjectList() {
 		if repo == "" {
 			repo = "(no repo)"
 		}
-		agent := p.Agent.Command
-		if agent == "" {
-			agent = "(none)"
-		}
-		rows = append(rows, row{name, repo, agent})
+		rows = append(rows, row{name, repo})
 	}
 
 	if len(rows) == 0 {
@@ -221,10 +217,10 @@ func cmdProjectList() {
 		return
 	}
 
-	fmt.Printf("%-20s  %-40s  %s\n", "NAME", "REPO", "AGENT")
-	fmt.Printf("%-20s  %-40s  %s\n", "--------------------", "----------------------------------------", "-----")
+	fmt.Printf("%-20s  %s\n", "NAME", "REPO")
+	fmt.Printf("%-20s  %s\n", "--------------------", "----")
 	for _, r := range rows {
-		fmt.Printf("%-20s  %-40s  %s\n", r.name, r.repo, r.agent)
+		fmt.Printf("%-20s  %s\n", r.name, r.repo)
 	}
 }
 
