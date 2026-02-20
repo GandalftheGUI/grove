@@ -30,9 +30,10 @@ grove start my-project feat/dark-mode
    the grove repo to get the repo URL
 2. Clones the repo (if needed) into `~/.grove/projects/my-project/main/`
 3. Runs `git pull` to sync to the latest remote HEAD
-4. Reads `.grove/project.yaml` from inside the cloned repo (if it exists) and
-   overlays the bootstrap, agent, and complete settings; if the file is missing
-   and no agent is configured in the registration, prompts you to create it
+4. Reads `.grove/project.yaml` from inside the cloned repo — this is the
+   project-owned config that defines bootstrap, agent, and complete settings;
+   if the file is missing and no agent is configured in the registration,
+   prompts you to create it
 5. Creates a Git worktree at `~/.grove/projects/my-project/worktrees/<id>/`
    on branch `feat/dark-mode`
 6. Runs the `bootstrap` commands in the worktree (output streams to your terminal)
@@ -56,12 +57,14 @@ go build -o bin/grove  ./cmd/grove
 
 ## Two-layer project config
 
-Project configuration is split into two files that overlay each other:
+Project configuration is split into two layers. The **project repo owns the
+config**; the grove repo only stores a lightweight pointer to find it.
 
-### 1. Registration (in the grove repo)
+### 1. Registration (in the grove repo — pointer only)
 
-Tells grove how to **find** the project. Stored in the grove repo itself and
-read by the `grove` client at install time.
+Tells grove how to **find** the project. A registration is just a name and
+repo URL stored in the grove repo. It does not define how to build, run, or
+complete work — that belongs in the project repo itself.
 
 ```
 <grove-repo>/
@@ -71,7 +74,7 @@ read by the `grove` client at install time.
    └─ <name>/project.yaml
 ```
 
-A minimal registration only needs a name and repo URL:
+A registration only needs two fields:
 
 ```yaml
 name: my-app
@@ -80,12 +83,12 @@ repo: git@github.com:example/my-app.git
 
 Run `grove project create <name>` to scaffold one.
 
-### 2. In-repo config (committed in the target project)
+### 2. In-repo config (owned by the project repo)
 
-Tells grove how to **set up and run** the project. Committed at
-`.grove/project.yaml` inside the project's own repository so every
-groved user automatically gets the right bootstrap, agent, and completion
-steps — no per-machine setup required.
+The **authoritative source** for how to set up and run the project. Committed
+at `.grove/project.yaml` inside the project's own repository so every groved
+user automatically gets the right bootstrap, agent, and completion steps — no
+per-machine setup required.
 
 ```
 <project-repo>/
@@ -93,9 +96,9 @@ steps — no per-machine setup required.
    └─ project.yaml      ← committed alongside your code
 ```
 
-**The in-repo config takes precedence** over the registration for every field
-it defines (`bootstrap`, `agent`, `complete`, `dev`). The registration's
-`repo` URL is always used for cloning.
+This file defines `bootstrap`, `agent`, `complete`, and `dev`. It always takes
+precedence over any values in the registration. The registration's `repo` URL
+is the only field that cannot be overridden (it is always used for cloning).
 
 If `grove start` finds no `.grove/project.yaml` and the registration has no
 agent command, it prompts you to create a boilerplate file and commit it.
@@ -127,17 +130,16 @@ Instance IDs are short and human-friendly: single characters from `1`–`9` then
 
 ### Registration (`projects.local/<name>/project.yaml`)
 
+The registration is a lightweight pointer — just name and repo URL:
+
 ```yaml
 name: my-app
 repo: git@github.com:example/my-app.git
-
-# Optional: set an agent here if the repo has no .grove/project.yaml yet.
-# agent:
-#   command: claude
-#   args: []
 ```
 
 ### In-repo config (`.grove/project.yaml` in your project)
+
+This is the project-owned config that defines how to build and run:
 
 ```yaml
 # ── Bootstrap ──────────────────────────────────────────────────────────────────
