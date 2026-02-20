@@ -26,13 +26,17 @@ invocation.
 grove start my-project feat/dark-mode
 ```
 
-1. Reads the project config from `projects.local/` or `projects/` in the repo
+1. Reads the project **registration** from `projects.local/` or `projects/` in
+   the grove repo to get the repo URL
 2. Clones the repo (if needed) into `~/.grove/projects/my-project/main/`
 3. Runs `git pull` to sync to the latest remote HEAD
-4. Creates a Git worktree at `~/.grove/projects/my-project/worktrees/<id>/`
+4. Reads `.grove/project.yaml` from inside the cloned repo (if it exists) and
+   overlays the bootstrap, agent, and complete settings; if the file is missing
+   and no agent is configured in the registration, prompts you to create it
+5. Creates a Git worktree at `~/.grove/projects/my-project/worktrees/<id>/`
    on branch `feat/dark-mode`
-5. Runs the `bootstrap` commands in the worktree (output streams to your terminal)
-6. Allocates a real PTY, starts the agent process inside it, and attaches your
+6. Runs the `bootstrap` commands in the worktree (output streams to your terminal)
+7. Allocates a real PTY, starts the agent process inside it, and attaches your
    terminal immediately (pass `-d` to skip auto-attach)
 
 **Worktrees are first-class citizens.** An instance record lives exactly as
@@ -50,10 +54,58 @@ go build -o bin/grove  ./cmd/grove
 
 ---
 
+## Two-layer project config
+
+Project configuration is split into two files that overlay each other:
+
+### 1. Registration (in the grove repo)
+
+Tells grove how to **find** the project. Stored in the grove repo itself and
+read by the `grove` client at install time.
+
+```
+<grove-repo>/
+├─ projects/             ← shared, tracked by git
+│  └─ <name>/project.yaml
+└─ projects.local/       ← personal, git-ignored
+   └─ <name>/project.yaml
+```
+
+A minimal registration only needs a name and repo URL:
+
+```yaml
+name: my-app
+repo: git@github.com:example/my-app.git
+```
+
+Run `grove project create <name>` to scaffold one.
+
+### 2. In-repo config (committed in the target project)
+
+Tells grove how to **set up and run** the project. Committed at
+`.grove/project.yaml` inside the project's own repository so every
+groved user automatically gets the right bootstrap, agent, and completion
+steps — no per-machine setup required.
+
+```
+<project-repo>/
+└─ .grove/
+   └─ project.yaml      ← committed alongside your code
+```
+
+**The in-repo config takes precedence** over the registration for every field
+it defines (`bootstrap`, `agent`, `complete`, `dev`). The registration's
+`repo` URL is always used for cloning.
+
+If `grove start` finds no `.grove/project.yaml` and the registration has no
+agent command, it prompts you to create a boilerplate file and commit it.
+
+---
+
 ## Filesystem layout
 
 ```
-~/.grove/
+~/.grove/                        ← runtime data root (GROVE_ROOT)
 ├─ projects/
 │  └─ <project-name>/
 │     ├─ main/          ← canonical git clone
@@ -63,45 +115,57 @@ go build -o bin/grove  ./cmd/grove
 │  └─ <id>.json         ← persisted instance metadata (survives daemon restart)
 ├─ logs/
 │  └─ <id>.log          ← PTY output + bootstrap + complete command output
-└─ groved.sock        ← Unix domain socket
+└─ groved.sock          ← Unix domain socket
 ```
 
-Project config lives in the grove repo itself:
-
-```
-<repo>/
-├─ projects/             ← shared, tracked by git
-│  └─ <name>/project.yaml
-└─ projects.local/       ← personal, git-ignored
-   └─ <name>/project.yaml
-```
+Instance IDs are short and human-friendly: single characters from `1`–`9` then
+`a`–`z` (35 slots), expanding to two-character combinations as needed.
 
 ---
 
-## Project definition (`project.yaml`)
+## Project definition
+
+### Registration (`projects.local/<name>/project.yaml`)
 
 ```yaml
 name: my-app
 repo: git@github.com:example/my-app.git
 
-bootstrap:
-  - npm install
+# Optional: set an agent here if the repo has no .grove/project.yaml yet.
+# agent:
+#   command: claude
+#   args: []
+```
 
+### In-repo config (`.grove/project.yaml` in your project)
+
+```yaml
+# ── Bootstrap ──────────────────────────────────────────────────────────────────
+# Commands run once in each fresh worktree before the agent starts.
+# Working directory: worktree root. Delegate to a script when possible.
+bootstrap:
+  - ./scripts/bootstrap.sh
+  # - npm install
+  # - pip install -r requirements.txt
+
+# ── Agent ──────────────────────────────────────────────────────────────────────
+# The AI coding agent to run inside each worktree PTY.
+# Common values: claude, aider, sh (plain shell, useful for testing)
 agent:
   command: claude
   args: []
 
-dev:
-  start:
-    - npx expo start
-
-# complete: commands run by `grove finish`. Use {{branch}} for the branch name.
+# ── Complete ───────────────────────────────────────────────────────────────────
+# Commands run by `grove finish`. Use {{branch}} for the branch name.
+# The daemon runs these to completion even if you close your terminal.
 complete:
   - git push -u origin {{branch}}
   # - gh pr create --title "{{branch}}" --fill
-```
 
-Use `grove project create <name>` to scaffold a new project file.
+# ── Dev servers (reserved, not yet implemented) ────────────────────────────────
+dev:
+  start: []
+```
 
 ---
 
@@ -111,7 +175,7 @@ Use `grove project create <name>` to scaffold a new project file.
 
 ```
 grove project create <name> [--global] [--repo <url>] [--agent <cmd>]
-                         Define a new project (personal by default, --global for shared)
+                         Define a new project registration (personal by default, --global for shared)
 grove project list     List defined projects
 grove main <project>   Print the main checkout path for a project
 ```
@@ -197,11 +261,11 @@ starts. Use `-d` to skip and leave the agent running in the background.
 # 0. Register the daemon (once, on macOS)
 grove daemon install
 
-# 1. Define a project
+# 1. Register a project (creates projects.local/my-app/project.yaml)
 grove project create my-app --repo git@github.com:you/my-app.git
-# Edit projects.local/my-app/project.yaml to add bootstrap steps
 
-# 2. Start an agent on a branch (bootstrap output streams here; auto-attaches)
+# 2. Start an agent on a branch
+#    If the repo has no .grove/project.yaml, grove will prompt you to create one.
 grove start my-app feat/dark-mode
 
 # … interact with the agent, then Ctrl-] to detach …
