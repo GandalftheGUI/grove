@@ -55,8 +55,20 @@ func main() {
 		cmdWatch()
 	case "logs":
 		cmdLogs()
-	case "destroy":
-		cmdDestroy()
+	case "stop":
+		cmdStop()
+	case "restart":
+		cmdRestart()
+	case "drop":
+		cmdDrop()
+	case "finish":
+		cmdFinish()
+	case "prune":
+		cmdPrune()
+	case "worktree":
+		cmdWorktree()
+	case "main":
+		cmdMain()
 	case "daemon":
 		cmdDaemon()
 	default:
@@ -71,21 +83,27 @@ func usage() {
 
 Project commands:
   project create <name> [--global] [--repo <url>] [--agent <cmd>]
-                             Define a new project (personal by default, --global for shared)
-  project list               List defined projects
+                           Define a new project (personal by default, --global for shared)
+  project list             List defined projects
+  main <project>           Print the main checkout path for a project
 
 Instance commands:
-  start <project> "<task>"   Start a new agent instance
-  list                       List all instances
-  watch                      Live dashboard (refreshes every second, Ctrl-C to exit)
-  attach <instance-id>       Attach terminal to an instance (detach: Ctrl-])
-  logs <instance-id> [-f]    Print buffered output for an instance
-  destroy <instance-id>      Stop and destroy an instance
+  start <project> "<task>" [-d]  Start a new agent instance (attaches immediately; -d to skip)
+  attach <instance-id>           Attach terminal to an instance (detach: Ctrl-])
+  stop <instance-id>             Kill the agent; instance stays in list as CRASHED
+  restart <instance-id> [-d]     Restart agent in existing worktree (attaches immediately; -d to skip)
+  finish <instance-id>           Run completion steps; instance stays as FINISHED
+  drop <instance-id>             Delete the worktree and branch permanently
+  list [--active]                List all instances (--active: exclude FINISHED)
+  logs <instance-id> [-f]        Print buffered output for an instance
+  watch                          Live dashboard (refreshes every second, Ctrl-C to exit)
+  prune [--finished]             Drop all exited/crashed instances (--finished: also FINISHED)
+  worktree <instance-id>         Print the worktree path for an instance
 
 Daemon commands:
-  daemon install             Register catherdd as a login LaunchAgent
-  daemon uninstall           Remove the LaunchAgent
-  daemon status              Show whether the LaunchAgent is installed and running`)
+  daemon install           Register catherdd as a login LaunchAgent
+  daemon uninstall         Remove the LaunchAgent
+  daemon status            Show whether the LaunchAgent is installed and running`)
 }
 
 // ─── Subcommand implementations ───────────────────────────────────────────────
@@ -240,12 +258,20 @@ func cmdProjectList() {
 }
 
 func cmdStart() {
-	if len(os.Args) < 4 {
-		fmt.Fprintln(os.Stderr, "usage: catherd start <project> \"<task>\"")
+	fs := flag.NewFlagSet("start", flag.ExitOnError)
+	detach := fs.Bool("detach", false, "do not attach after starting")
+	fs.BoolVar(detach, "d", false, "do not attach after starting")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "usage: catherd start <project> \"<task>\" [-d]")
+	}
+	fs.Parse(os.Args[2:])
+	args := fs.Args()
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: catherd start <project> \"<task>\" [-d]")
 		os.Exit(1)
 	}
-	project := os.Args[2]
-	task := os.Args[3]
+	project := args[0]
+	task := args[1]
 
 	resp := mustRequest(proto.Request{
 		Type:    proto.ReqStart,
@@ -254,25 +280,48 @@ func cmdStart() {
 	})
 
 	fmt.Printf("started instance %s\n", resp.InstanceID)
-	fmt.Printf("run: catherd attach %s\n", resp.InstanceID)
+
+	if !*detach {
+		doAttach(resp.InstanceID)
+	}
 }
 
 func cmdList() {
+	fs := flag.NewFlagSet("list", flag.ExitOnError)
+	activeOnly := fs.Bool("active", false, "show only active instances (exclude FINISHED)")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "usage: catherd list [--active]")
+	}
+	fs.Parse(os.Args[2:])
+
 	resp := mustRequest(proto.Request{Type: proto.ReqList})
 
-	if len(resp.Instances) == 0 {
+	var instances []proto.InstanceInfo
+	for _, inst := range resp.Instances {
+		if *activeOnly && inst.State == proto.StateFinished {
+			continue
+		}
+		instances = append(instances, inst)
+	}
+
+	if len(instances) == 0 {
 		fmt.Println("no instances")
 		return
 	}
 
 	fmt.Printf("%-10s  %-12s  %-10s  %s\n", "ID", "PROJECT", "STATE", "TASK")
 	fmt.Printf("%-10s  %-12s  %-10s  %s\n", "----------", "------------", "----------", "----")
-	for _, inst := range resp.Instances {
+	for _, inst := range instances {
 		task := inst.Task
 		if len(task) > 50 {
 			task = task[:47] + "..."
 		}
-		fmt.Printf("%-10s  %-12s  %-10s  %s\n", inst.ID, inst.Project, inst.State, task)
+		color := colorState(inst.State)
+		reset := ""
+		if color != "" {
+			reset = "\033[0m"
+		}
+		fmt.Printf("%-10s  %-12s  %s%-10s%s  %s\n", inst.ID, inst.Project, color, inst.State, reset, task)
 	}
 }
 
@@ -281,8 +330,12 @@ func cmdAttach() {
 		fmt.Fprintln(os.Stderr, "usage: catherd attach <instance-id>")
 		os.Exit(1)
 	}
-	instanceID := os.Args[2]
+	doAttach(os.Args[2])
+}
 
+// doAttach connects the terminal to the instance PTY and blocks until the
+// user detaches (Ctrl-]) or the agent exits.
+func doAttach(instanceID string) {
 	socketPath := daemonSocket()
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
@@ -291,7 +344,6 @@ func cmdAttach() {
 	}
 	// Note: conn is NOT deferred-closed here; the attach loop owns its lifetime.
 
-	// Send attach request and read the JSON handshake response.
 	if err := writeRequest(conn, proto.Request{
 		Type:       proto.ReqAttach,
 		InstanceID: instanceID,
@@ -313,16 +365,6 @@ func cmdAttach() {
 		os.Exit(1)
 	}
 
-	// ── Attach session ────────────────────────────────────────────────────────
-	//
-	// Terminal is put into raw mode so all keystrokes go directly to the agent.
-	// Ctrl-] (0x1D) is intercepted as the detach escape.
-	//
-	// Wire format (client → server) after handshake:
-	//   [1 byte type][4 byte big-endian length][payload]
-	//
-	// Server → client: raw PTY bytes (written directly to stdout).
-
 	fd := int(os.Stdin.Fd())
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
@@ -338,8 +380,6 @@ func cmdAttach() {
 
 	fmt.Fprintf(os.Stdout, "\r\n[catherd] attached to %s  (detach: Ctrl-])\r\n", instanceID)
 
-	// Channel signalling that either the server closed the connection or the
-	// user sent a detach frame.
 	done := make(chan struct{}, 1)
 
 	// Goroutine 1: copy PTY output (server → client) to stdout.
@@ -357,10 +397,8 @@ func cmdAttach() {
 		for {
 			n, err := os.Stdin.Read(buf)
 			if n > 0 {
-				// Check for detach byte (Ctrl-] = 0x1D).
 				for i := 0; i < n; i++ {
 					if buf[i] == 0x1D {
-						// Send detach frame, then signal done.
 						sendFrame(conn, proto.AttachFrameDetach, nil)
 						select {
 						case done <- struct{}{}:
@@ -369,7 +407,6 @@ func cmdAttach() {
 						return
 					}
 				}
-				// Send data frame.
 				sendFrame(conn, proto.AttachFrameData, buf[:n])
 			}
 			if err != nil {
@@ -382,7 +419,7 @@ func cmdAttach() {
 		}
 	}()
 
-	// Handle terminal resize: forward SIGWINCH to the daemon as a resize frame.
+	// Forward terminal resize events.
 	winchCh := make(chan os.Signal, 1)
 	signal.Notify(winchCh, syscall.SIGWINCH)
 	go func() {
@@ -409,9 +446,8 @@ func cmdAttach() {
 	signal.Stop(winchCh)
 	conn.Close()
 
-	// restore() is called by defer; print a newline after the raw session.
 	restore()
-	defer func() { /* suppress the second restore() from defer */ }()
+	defer func() {}() // suppress second restore() from defer
 	fmt.Fprintf(os.Stdout, "\n[catherd] detached from %s\n", instanceID)
 }
 
@@ -567,6 +603,10 @@ func colorState(state string) string {
 		return "\033[2m"
 	case "CRASHED":
 		return "\033[31m"
+	case "KILLED":
+		return "\033[33m"
+	case "FINISHED":
+		return "\033[2m"
 	default:
 		return ""
 	}
@@ -585,20 +625,185 @@ func formatUptime(secs int64) string {
 	return fmt.Sprintf("%dh%02dm", secs/3600, (secs%3600)/60)
 }
 
-func cmdDestroy() {
+func cmdStop() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: catherd destroy <instance-id>")
+		fmt.Fprintln(os.Stderr, "usage: catherd stop <instance-id>")
+		os.Exit(1)
+	}
+	instanceID := os.Args[2]
+
+	mustRequest(proto.Request{
+		Type:       proto.ReqStop,
+		InstanceID: instanceID,
+	})
+
+	fmt.Printf("stopped %s\n", instanceID)
+}
+
+func cmdRestart() {
+	fs := flag.NewFlagSet("restart", flag.ExitOnError)
+	detach := fs.Bool("detach", false, "do not attach after restarting")
+	fs.BoolVar(detach, "d", false, "do not attach after restarting")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "usage: catherd restart <instance-id> [-d]")
+	}
+	fs.Parse(os.Args[2:])
+	args := fs.Args()
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: catherd restart <instance-id> [-d]")
+		os.Exit(1)
+	}
+	instanceID := args[0]
+
+	mustRequest(proto.Request{
+		Type:       proto.ReqRestart,
+		InstanceID: instanceID,
+	})
+
+	fmt.Printf("restarted %s\n", instanceID)
+
+	if !*detach {
+		doAttach(instanceID)
+	}
+}
+
+func cmdDrop() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: catherd drop <instance-id>")
+		os.Exit(1)
+	}
+	instanceID := os.Args[2]
+
+	// Fetch instance info to display worktree and branch before confirming.
+	listResp := mustRequest(proto.Request{Type: proto.ReqList})
+	var found *proto.InstanceInfo
+	for i := range listResp.Instances {
+		if listResp.Instances[i].ID == instanceID {
+			found = &listResp.Instances[i]
+			break
+		}
+	}
+	if found == nil {
+		fmt.Fprintf(os.Stderr, "catherd: instance not found: %s\n", instanceID)
+		os.Exit(1)
+	}
+
+	fmt.Printf("worktree: %s\n", found.WorktreeDir)
+	fmt.Printf("branch:   %s\n", found.Branch)
+	fmt.Print("Delete? [y/N] ")
+
+	reader := bufio.NewReader(os.Stdin)
+	answer, _ := reader.ReadString('\n')
+	answer = strings.TrimSpace(answer)
+	if answer != "y" && answer != "Y" {
+		fmt.Println("aborted")
+		return
+	}
+
+	mustRequest(proto.Request{
+		Type:       proto.ReqDrop,
+		InstanceID: instanceID,
+	})
+	fmt.Printf("dropped %s\n", instanceID)
+}
+
+func cmdFinish() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: catherd finish <instance-id>")
 		os.Exit(1)
 	}
 	instanceID := os.Args[2]
 
 	resp := mustRequest(proto.Request{
-		Type:       proto.ReqDestroy,
+		Type:       proto.ReqFinish,
 		InstanceID: instanceID,
 	})
 
-	_ = resp
-	fmt.Printf("destroyed %s\n", instanceID)
+	for _, cmdStr := range resp.CompleteCommands {
+		expanded := strings.ReplaceAll(cmdStr, "{{task}}", resp.Task)
+		fmt.Printf("$ %s\n", expanded)
+		c := exec.Command("sh", "-c", expanded)
+		c.Dir = resp.WorktreeDir
+		c.Stdout = os.Stdout
+		c.Stderr = os.Stderr
+		if err := c.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "catherd: finish: command failed: %v\n", err)
+			os.Exit(1)
+		}
+	}
+}
+
+func cmdMain() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: catherd main <project>")
+		os.Exit(1)
+	}
+	project := os.Args[2]
+	fmt.Println(filepath.Join(rootDir(), "projects", project, "main"))
+}
+
+func cmdWorktree() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: catherd worktree <instance-id>")
+		os.Exit(1)
+	}
+	id := os.Args[2]
+
+	resp := mustRequest(proto.Request{Type: proto.ReqList})
+	for _, inst := range resp.Instances {
+		if inst.ID == id {
+			fmt.Println(inst.WorktreeDir)
+			return
+		}
+	}
+	fmt.Fprintf(os.Stderr, "catherd: instance not found: %s\n", id)
+	os.Exit(1)
+}
+
+func cmdPrune() {
+	fs := flag.NewFlagSet("prune", flag.ExitOnError)
+	includeFinished := fs.Bool("finished", false, "also drop FINISHED instances")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "usage: catherd prune [--finished]")
+	}
+	fs.Parse(os.Args[2:])
+
+	resp := mustRequest(proto.Request{Type: proto.ReqList})
+
+	var dead []proto.InstanceInfo
+	for _, inst := range resp.Instances {
+		switch inst.State {
+		case proto.StateExited, proto.StateCrashed, proto.StateKilled:
+			dead = append(dead, inst)
+		case proto.StateFinished:
+			if *includeFinished {
+				dead = append(dead, inst)
+			}
+		}
+	}
+
+	if len(dead) == 0 {
+		fmt.Println("nothing to prune")
+		return
+	}
+
+	for _, inst := range dead {
+		fmt.Printf("  %s  %-9s  worktree: %s\n", inst.ID, inst.State, inst.WorktreeDir)
+	}
+	fmt.Printf("Drop %d instance(s) and their worktrees? [y/N] ", len(dead))
+
+	reader := bufio.NewReader(os.Stdin)
+	answer, _ := reader.ReadString('\n')
+	answer = strings.TrimSpace(answer)
+	if answer != "y" && answer != "Y" {
+		fmt.Println("aborted")
+		return
+	}
+
+	for _, inst := range dead {
+		mustRequest(proto.Request{Type: proto.ReqDrop, InstanceID: inst.ID})
+		fmt.Printf("dropped %s\n", inst.ID)
+	}
 }
 
 // ─── Daemon install/uninstall/status ─────────────────────────────────────────

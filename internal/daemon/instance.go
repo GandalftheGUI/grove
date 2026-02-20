@@ -70,6 +70,17 @@ type Instance struct {
 	endedAt        time.Time    // when the process exited; zero if still running
 	attachedConn   net.Conn     // non-nil while a client is attached
 	attachDone     chan struct{} // closed when the current attach session ends
+
+	// InstancesDir is set so ptyReader can persist state changes on exit.
+	InstancesDir string
+	// finishRequest, when true, causes ptyReader to transition to FINISHED
+	// instead of EXITED/CRASHED when the process stops.
+	finishRequest bool
+	// killed, when true, means destroy() was called deliberately; ptyReader
+	// transitions to KILLED instead of CRASHED on non-zero exit.
+	killed bool
+	// processDone is closed by ptyReader when the agent process fully exits.
+	processDone chan struct{}
 }
 
 // Info returns a serialisable snapshot of this instance's metadata.
@@ -137,6 +148,7 @@ func (inst *Instance) startAgent(agentCmd string, agentArgs []string) error {
 	inst.ptm = ptm
 	inst.pid = cmd.Process.Pid
 	inst.state = proto.StateRunning
+	inst.processDone = make(chan struct{})
 	inst.mu.Unlock()
 
 	// Background goroutine: drain PTY master and buffer/forward output.
@@ -204,23 +216,42 @@ func (inst *Instance) ptyReader(cmd *exec.Cmd) {
 	inst.endedAt = time.Now()
 	if waitErr == nil {
 		inst.state = proto.StateExited
+	} else if inst.killed {
+		inst.state = proto.StateKilled
 	} else {
 		inst.state = proto.StateCrashed
 	}
 	conn := inst.attachedConn
 	inst.attachedConn = nil
-	done := inst.attachDone
 	inst.mu.Unlock()
 
-	// If a client is still attached, close the connection so catherd exits.
+	// Close the client connection to unblock the Attach goroutine's frame
+	// reader.  The Attach goroutine's defer is the sole owner of close(done);
+	// closing it here too would double-close the channel and panic the daemon.
 	if conn != nil {
 		conn.Close()
 	}
-	if done != nil {
-		close(done)
-	}
 
 	log.Printf("instance %s: agent exited (%v)", inst.ID, waitErr)
+
+	// If finish was requested, override state to FINISHED.
+	inst.mu.Lock()
+	if inst.finishRequest {
+		inst.state = proto.StateFinished
+	}
+	instancesDir := inst.InstancesDir
+	processDone := inst.processDone
+	inst.mu.Unlock()
+
+	// Persist the final state to disk.
+	if instancesDir != "" {
+		inst.persistMeta(instancesDir)
+	}
+
+	// Signal that the process has fully exited.
+	if processDone != nil {
+		close(processDone)
+	}
 }
 
 // Attach connects a client network connection to this instance's PTY.
@@ -325,17 +356,27 @@ func (inst *Instance) Attach(conn net.Conn) {
 	<-done
 }
 
-// destroy kills the agent process group and removes the PTY.
+// destroy kills the agent process and its process group, then closes the PTY.
 func (inst *Instance) destroy() {
 	inst.mu.Lock()
 	ptm := inst.ptm
 	pid := inst.pid
 	conn := inst.attachedConn
+	inst.killed = true
 	inst.mu.Unlock()
 
-	// Kill the entire process group (negative PID = pgid).
 	if pid > 0 {
-		syscall.Kill(-pid, syscall.SIGKILL)
+		// Look up the actual PGID rather than assuming it equals the PID.
+		// After pty.Start (which calls setsid), the child is its own session
+		// leader and PGID = PID — but using Getpgid makes this explicit and
+		// safe against any edge cases.
+		pgid, err := syscall.Getpgid(pid)
+		if err == nil && pgid > 0 {
+			syscall.Kill(-pgid, syscall.SIGKILL)
+		} else {
+			// Fallback: kill just the process.
+			syscall.Kill(pid, syscall.SIGKILL)
+		}
 	}
 
 	if ptm != nil {

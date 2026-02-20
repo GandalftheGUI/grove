@@ -16,7 +16,9 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -123,8 +125,17 @@ func (d *Daemon) handleConn(conn net.Conn) {
 	case proto.ReqLogsFollow:
 		d.handleLogsFollow(conn, req)
 
-	case proto.ReqDestroy:
-		d.handleDestroy(conn, req)
+	case proto.ReqStop:
+		d.handleStop(conn, req)
+
+	case proto.ReqDrop:
+		d.handleDrop(conn, req)
+
+	case proto.ReqFinish:
+		d.handleFinish(conn, req)
+
+	case proto.ReqRestart:
+		d.handleRestart(conn, req)
 
 	default:
 		respond(conn, proto.Response{OK: false, Error: "unknown request type: " + req.Type})
@@ -157,6 +168,12 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 		return
 	}
 
+	// Pull latest changes so the new worktree branches from current remote HEAD.
+	// Non-fatal: log the warning and continue so offline use still works.
+	if err := pullMain(p); err != nil {
+		log.Printf("warning: git pull failed for %s: %v", req.Project, err)
+	}
+
 	d.mu.Lock()
 	instanceID := d.nextInstanceID()
 	d.mu.Unlock()
@@ -180,14 +197,15 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 	logFile := filepath.Join(d.rootDir, "logs", instanceID+".log")
 
 	inst := &Instance{
-		ID:          instanceID,
-		Project:     req.Project,
-		Task:        req.Task,
-		Branch:      branchName,
-		WorktreeDir: worktreeDir,
-		CreatedAt:   time.Now(),
-		LogFile:     logFile,
-		state:       proto.StateRunning,
+		ID:           instanceID,
+		Project:      req.Project,
+		Task:         req.Task,
+		Branch:       branchName,
+		WorktreeDir:  worktreeDir,
+		CreatedAt:    time.Now(),
+		LogFile:      logFile,
+		state:        proto.StateRunning,
+		InstancesDir: filepath.Join(d.rootDir, "instances"),
 	}
 
 	// Start the agent in a PTY.
@@ -218,6 +236,10 @@ func (d *Daemon) handleList(conn net.Conn) {
 	}
 	d.mu.Unlock()
 
+	sort.Slice(infos, func(i, j int) bool {
+		return infos[i].CreatedAt < infos[j].CreatedAt
+	})
+
 	respond(conn, proto.Response{OK: true, Instances: infos})
 }
 
@@ -232,7 +254,7 @@ func (d *Daemon) handleAttach(conn net.Conn, req proto.Request) {
 	state := inst.state
 	inst.mu.Unlock()
 
-	if state == proto.StateExited || state == proto.StateCrashed {
+	if state == proto.StateExited || state == proto.StateCrashed || state == proto.StateKilled || state == proto.StateFinished {
 		respond(conn, proto.Response{OK: false, Error: "instance has " + strings.ToLower(state)})
 		return
 	}
@@ -304,28 +326,149 @@ func (d *Daemon) handleLogsFollow(conn net.Conn, req proto.Request) {
 		}
 
 		// Exit when instance is done AND no more new bytes remain.
-		if (state == proto.StateExited || state == proto.StateCrashed) && len(newData) == 0 {
+		if (state == proto.StateExited || state == proto.StateCrashed || state == proto.StateKilled || state == proto.StateFinished) && len(newData) == 0 {
 			return
 		}
 	}
 }
 
-func (d *Daemon) handleDestroy(conn net.Conn, req proto.Request) {
+func (d *Daemon) handleStop(conn net.Conn, req proto.Request) {
 	inst := d.getInstance(req.InstanceID)
 	if inst == nil {
 		respond(conn, proto.Response{OK: false, Error: "instance not found: " + req.InstanceID})
 		return
 	}
 
+	// Kill the agent process if it is running; ptyReader will transition
+	// the state to CRASHED and persist it.  For already-dead instances
+	// (EXITED/CRASHED/FINISHED) this is a no-op.
 	inst.destroy()
+
+	respond(conn, proto.Response{OK: true})
+}
+
+func (d *Daemon) handleDrop(conn net.Conn, req proto.Request) {
+	inst := d.getInstance(req.InstanceID)
+	if inst == nil {
+		respond(conn, proto.Response{OK: false, Error: "instance not found: " + req.InstanceID})
+		return
+	}
+
+	worktreeDir := inst.WorktreeDir
+	branch := inst.Branch
+
+	inst.destroy()
+
+	// Derive mainDir: worktreeDir is <dataDir>/worktrees/<id>, so main is <dataDir>/main.
+	mainDir := filepath.Join(filepath.Dir(filepath.Dir(worktreeDir)), "main")
+
+	exec.Command("git", "-C", mainDir, "worktree", "remove", "--force", worktreeDir).Run()
+	exec.Command("git", "-C", mainDir, "branch", "-D", branch).Run()
 
 	d.mu.Lock()
 	delete(d.instances, req.InstanceID)
 	d.mu.Unlock()
 
-	// Remove persisted metadata.
-	metaPath := filepath.Join(d.rootDir, "instances", req.InstanceID+".json")
-	os.Remove(metaPath)
+	os.Remove(filepath.Join(d.rootDir, "instances", req.InstanceID+".json"))
+
+	respond(conn, proto.Response{OK: true})
+}
+
+func (d *Daemon) handleFinish(conn net.Conn, req proto.Request) {
+	inst := d.getInstance(req.InstanceID)
+	if inst == nil {
+		respond(conn, proto.Response{OK: false, Error: "instance not found: " + req.InstanceID})
+		return
+	}
+
+	worktreeDir := inst.WorktreeDir
+	task := inst.Task
+	projectName := inst.Project
+
+	inst.mu.Lock()
+	state := inst.state
+	switch state {
+	case proto.StateExited, proto.StateCrashed, proto.StateKilled:
+		// Process already dead; transition to FINISHED directly.
+		inst.state = proto.StateFinished
+		inst.mu.Unlock()
+	case proto.StateFinished:
+		// Already finished; nothing to do.
+		inst.mu.Unlock()
+	default:
+		// Agent is alive; request finish and wait for ptyReader to exit.
+		inst.finishRequest = true
+		processDone := inst.processDone
+		inst.mu.Unlock()
+		inst.destroy()
+		if processDone != nil {
+			<-processDone
+		}
+	}
+
+	// Persist FINISHED state. (ptyReader may have already done this if it ran,
+	// but an extra write is harmless.)
+	inst.persistMeta(filepath.Join(d.rootDir, "instances"))
+
+	p, err := loadProject(d.configDirs, d.rootDir, projectName)
+	var completeCommands []string
+	if err == nil {
+		completeCommands = p.Complete
+	}
+
+	respond(conn, proto.Response{
+		OK:               true,
+		WorktreeDir:      worktreeDir,
+		CompleteCommands: completeCommands,
+		Task:             task,
+	})
+}
+
+func (d *Daemon) handleRestart(conn net.Conn, req proto.Request) {
+	inst := d.getInstance(req.InstanceID)
+	if inst == nil {
+		respond(conn, proto.Response{OK: false, Error: "instance not found: " + req.InstanceID})
+		return
+	}
+
+	inst.mu.Lock()
+	state := inst.state
+	inst.mu.Unlock()
+
+	if state != proto.StateExited && state != proto.StateCrashed && state != proto.StateKilled && state != proto.StateFinished {
+		respond(conn, proto.Response{OK: false, Error: "cannot restart: instance is " + state})
+		return
+	}
+
+	p, err := loadProject(d.configDirs, d.rootDir, inst.Project)
+	if err != nil {
+		respond(conn, proto.Response{OK: false, Error: err.Error()})
+		return
+	}
+
+	// Non-fatal pull.
+	if err := pullMain(p); err != nil {
+		log.Printf("warning: git pull failed for %s: %v", inst.Project, err)
+	}
+
+	agentCmd := p.Agent.Command
+	if agentCmd == "" {
+		agentCmd = "sh"
+	}
+
+	// Reset mutable state before restarting.
+	inst.mu.Lock()
+	inst.endedAt = time.Time{}
+	inst.finishRequest = false
+	inst.killed = false
+	inst.mu.Unlock()
+
+	if err := inst.startAgent(agentCmd, p.Agent.Args); err != nil {
+		respond(conn, proto.Response{OK: false, Error: err.Error()})
+		return
+	}
+
+	inst.persistMeta(filepath.Join(d.rootDir, "instances"))
 
 	respond(conn, proto.Response{OK: true})
 }
@@ -370,8 +513,9 @@ func (d *Daemon) nextInstanceID() string {
 }
 
 // loadPersistedInstances reads instance JSON files written by previous daemon
-// runs and re-registers instances that were RUNNING or ATTACHED (they will
-// appear as EXITED on reload since the processes are gone).
+// runs and re-registers them with the correct state.  Instances that were
+// RUNNING/WAITING/ATTACHED when the daemon was killed are marked as CRASHED.
+// EXITED, CRASHED, and FINISHED states are preserved as-is.
 func (d *Daemon) loadPersistedInstances() error {
 	instancesDir := filepath.Join(d.rootDir, "instances")
 	entries, err := os.ReadDir(instancesDir)
@@ -391,18 +535,38 @@ func (d *Daemon) loadPersistedInstances() error {
 		if err := json.Unmarshal(data, &info); err != nil {
 			continue
 		}
-		// Register as EXITED; the process is gone after a daemon restart.
+
+		// Determine the correct state on reload.
+		state := info.State
+		endedAt := time.Time{}
+		if info.EndedAt > 0 {
+			endedAt = time.Unix(info.EndedAt, 0)
+		}
+
+		// If the daemon was killed mid-run, the process is gone → CRASHED.
+		if state == proto.StateRunning || state == proto.StateWaiting || state == proto.StateAttached {
+			state = proto.StateCrashed
+			endedAt = time.Now()
+		}
+
 		inst := &Instance{
-			ID:          info.ID,
-			Project:     info.Project,
-			Task:        info.Task,
-			Branch:      info.Branch,
-			WorktreeDir: info.WorktreeDir,
-			CreatedAt:   time.Unix(info.CreatedAt, 0),
-			LogFile:     filepath.Join(d.rootDir, "logs", info.ID+".log"),
-			state:       proto.StateExited,
+			ID:           info.ID,
+			Project:      info.Project,
+			Task:         info.Task,
+			Branch:       info.Branch,
+			WorktreeDir:  info.WorktreeDir,
+			CreatedAt:    time.Unix(info.CreatedAt, 0),
+			LogFile:      filepath.Join(d.rootDir, "logs", info.ID+".log"),
+			state:        state,
+			endedAt:      endedAt,
+			InstancesDir: instancesDir,
 		}
 		d.instances[info.ID] = inst
+
+		// Persist the corrected state if it changed (e.g., RUNNING → CRASHED).
+		if state != info.State {
+			inst.persistMeta(instancesDir)
+		}
 	}
 
 	return nil

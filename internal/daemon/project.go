@@ -15,6 +15,7 @@ type Project struct {
 	Repo string `yaml:"repo"`
 
 	Bootstrap []string `yaml:"bootstrap"`
+	Complete  []string `yaml:"complete"`
 
 	Agent struct {
 		Command string   `yaml:"command"`
@@ -102,6 +103,19 @@ func ensureMainCheckout(p *Project) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// pullMain runs "git pull" in the main checkout to bring it up-to-date with
+// the remote before branching.  Errors are non-fatal — the caller logs and
+// continues so that offline use still works.
+func pullMain(p *Project) error {
+	cmd := exec.Command("git", "-C", p.MainDir(), "pull")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git pull: %w", err)
+	}
+	return nil
 }
 
 // createWorktree creates a new git worktree at worktreeDir on branch branchName,

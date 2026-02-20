@@ -23,7 +23,10 @@ const (
 	ReqAttach  = "attach"
 	ReqLogs       = "logs"
 	ReqLogsFollow = "logs_follow"
-	ReqDestroy    = "destroy"
+	ReqStop = "stop"
+	ReqDrop       = "drop"
+	ReqFinish     = "finish"
+	ReqRestart    = "restart"
 )
 
 // Instance state constants.
@@ -33,6 +36,8 @@ const (
 	StateAttached = "ATTACHED"
 	StateExited   = "EXITED"
 	StateCrashed  = "CRASHED"
+	StateKilled   = "KILLED"
+	StateFinished = "FINISHED"
 )
 
 // Request is the JSON payload sent from catherd to catherdd.
@@ -62,6 +67,11 @@ type Response struct {
 	Error      string         `json:"error,omitempty"`
 	InstanceID string         `json:"instance_id,omitempty"`
 	Instances  []InstanceInfo `json:"instances,omitempty"`
+
+	// Fields used by ReqFinish response.
+	WorktreeDir      string   `json:"worktree_dir,omitempty"`
+	CompleteCommands []string `json:"complete_commands,omitempty"`
+	Task             string   `json:"task,omitempty"`
 }
 
 // ─── Attach stream framing ────────────────────────────────────────────────────
