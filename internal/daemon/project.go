@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -81,7 +82,8 @@ func loadProject(configDirs []string, dataRoot, name string) (*Project, error) {
 
 // ensureMainCheckout clones the project repo into the main directory if it
 // does not already exist.  It is a no-op if the directory already has a git repo.
-func ensureMainCheckout(p *Project) error {
+// All output (git clone progress, etc.) is written to w.
+func ensureMainCheckout(p *Project, w io.Writer) error {
 	mainDir := p.MainDir()
 	gitDir := filepath.Join(mainDir, ".git")
 
@@ -98,20 +100,20 @@ func ensureMainCheckout(p *Project) error {
 		return err
 	}
 
-	fmt.Printf("Cloning %s into %s …\n", p.Repo, mainDir)
+	fmt.Fprintf(w, "Cloning %s into %s …\n", p.Repo, mainDir)
 	cmd := exec.Command("git", "clone", p.Repo, mainDir)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = w
+	cmd.Stderr = w
 	return cmd.Run()
 }
 
 // pullMain runs "git pull" in the main checkout to bring it up-to-date with
 // the remote before branching.  Errors are non-fatal — the caller logs and
-// continues so that offline use still works.
-func pullMain(p *Project) error {
+// continues so that offline use still works.  Output is written to w.
+func pullMain(p *Project, w io.Writer) error {
 	cmd := exec.Command("git", "-C", p.MainDir(), "pull")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = w
+	cmd.Stderr = w
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("git pull: %w", err)
 	}
@@ -158,13 +160,14 @@ func removeWorktree(p *Project, instanceID, branchName string) {
 }
 
 // runBootstrap executes the project bootstrap commands sequentially in dir.
-func runBootstrap(p *Project, dir string) error {
+// All output is written to w.
+func runBootstrap(p *Project, dir string, w io.Writer) error {
 	for _, cmdStr := range p.Bootstrap {
-		fmt.Printf("Bootstrap: %s\n", cmdStr)
+		fmt.Fprintf(w, "Bootstrap: %s\n", cmdStr)
 		cmd := exec.Command("sh", "-c", cmdStr)
 		cmd.Dir = dir
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		cmd.Stdout = w
+		cmd.Stderr = w
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("bootstrap %q: %w", cmdStr, err)
 		}

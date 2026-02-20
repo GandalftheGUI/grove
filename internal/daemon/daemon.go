@@ -9,10 +9,12 @@ package daemon
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -166,21 +168,36 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 		return
 	}
 
+	// Allocate instance ID early so the log file can be named after it.
+	d.mu.Lock()
+	instanceID := d.nextInstanceID()
+	d.mu.Unlock()
+
+	logFile := filepath.Join(d.rootDir, "logs", instanceID+".log")
+	logFd, _ := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if logFd != nil {
+		defer logFd.Close()
+	}
+
+	// setupW captures all clone/pull/bootstrap output in memory and also
+	// writes it to the log file so it's preserved after the connection closes.
+	var outputBuf bytes.Buffer
+	var setupW io.Writer = &outputBuf
+	if logFd != nil {
+		setupW = io.MultiWriter(&outputBuf, logFd)
+	}
+
 	// Ensure the canonical checkout exists (clone if needed).
-	if err := ensureMainCheckout(p); err != nil {
+	if err := ensureMainCheckout(p, setupW); err != nil {
 		respond(conn, proto.Response{OK: false, Error: err.Error()})
 		return
 	}
 
 	// Pull latest changes so the new worktree branches from current remote HEAD.
 	// Non-fatal: log the warning and continue so offline use still works.
-	if err := pullMain(p); err != nil {
+	if err := pullMain(p, setupW); err != nil {
 		log.Printf("warning: git pull failed for %s: %v", req.Project, err)
 	}
-
-	d.mu.Lock()
-	instanceID := d.nextInstanceID()
-	d.mu.Unlock()
 
 	// Create the git worktree on the user-specified branch.
 	worktreeDir, err := createWorktree(p, instanceID, req.Branch)
@@ -190,13 +207,11 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 	}
 
 	// Run bootstrap commands in the new worktree.
-	if err := runBootstrap(p, worktreeDir); err != nil {
+	if err := runBootstrap(p, worktreeDir, setupW); err != nil {
 		removeWorktree(p, instanceID, req.Branch)
 		respond(conn, proto.Response{OK: false, Error: err.Error()})
 		return
 	}
-
-	logFile := filepath.Join(d.rootDir, "logs", instanceID+".log")
 
 	inst := &Instance{
 		ID:           instanceID,
@@ -226,7 +241,12 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 
 	inst.persistMeta(filepath.Join(d.rootDir, "instances"))
 
+	// Send the JSON ACK first, then stream any captured setup output.
+	// The client reads the JSON line, io.Copy's the rest to stdout, then attaches.
 	respond(conn, proto.Response{OK: true, InstanceID: instanceID})
+	if outputBuf.Len() > 0 {
+		conn.Write(outputBuf.Bytes())
+	}
 }
 
 func (d *Daemon) handleList(conn net.Conn) {
@@ -411,18 +431,43 @@ func (d *Daemon) handleFinish(conn net.Conn, req proto.Request) {
 	// but an extra write is harmless.)
 	inst.persistMeta(filepath.Join(d.rootDir, "instances"))
 
+	// Send ACK — instance is now FINISHED regardless of what complete commands do.
+	respond(conn, proto.Response{OK: true, WorktreeDir: worktreeDir, Branch: branch})
+
 	p, err := loadProject(d.configDirs, d.rootDir, projectName)
-	var completeCommands []string
-	if err == nil {
-		completeCommands = p.Complete
+	if err != nil {
+		fmt.Fprintf(conn, "warning: could not load project to run complete commands: %v\n", err)
+		return
+	}
+	if len(p.Complete) == 0 {
+		return
 	}
 
-	respond(conn, proto.Response{
-		OK:               true,
-		WorktreeDir:      worktreeDir,
-		CompleteCommands: completeCommands,
-		Branch:           branch,
-	})
+	// Open the instance log file for appending so complete command output is
+	// preserved even if the client disconnects mid-way.
+	logFd, _ := os.OpenFile(inst.LogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
+	if logFd != nil {
+		defer logFd.Close()
+	}
+
+	// w writes to both the connection and the log file.  If the client
+	// disconnects, writes to conn are silently dropped but the log keeps
+	// receiving output and commands run to completion.
+	w := newResilientWriter(conn, logFd)
+
+	for _, cmdStr := range p.Complete {
+		expanded := strings.ReplaceAll(cmdStr, "{{branch}}", branch)
+		fmt.Fprintf(w, "$ %s\n", expanded)
+		c := exec.Command("sh", "-c", expanded)
+		c.Dir = worktreeDir
+		c.Stdout = w
+		c.Stderr = w
+		if err := c.Run(); err != nil {
+			fmt.Fprintf(w, "error: command failed: %v\n", err)
+			log.Printf("instance %s: complete command failed: %v", inst.ID, err)
+			return
+		}
+	}
 }
 
 func (d *Daemon) handleRestart(conn net.Conn, req proto.Request) {
@@ -447,8 +492,8 @@ func (d *Daemon) handleRestart(conn net.Conn, req proto.Request) {
 		return
 	}
 
-	// Non-fatal pull.
-	if err := pullMain(p); err != nil {
+	// Non-fatal pull; output goes to daemon log only.
+	if err := pullMain(p, log.Writer()); err != nil {
 		log.Printf("warning: git pull failed for %s: %v", inst.Project, err)
 	}
 
@@ -570,4 +615,35 @@ func (d *Daemon) loadPersistedInstances() error {
 	}
 
 	return nil
+}
+
+// ─── resilientWriter ──────────────────────────────────────────────────────────
+
+// resilientWriter fans output to a log file (always) and a network connection
+// (best-effort).  If the connection breaks, writes continue to the log and the
+// caller (exec.Command) never sees an error, so the child process keeps running
+// even if the client disconnects.
+type resilientWriter struct {
+	mu     sync.Mutex
+	conn   net.Conn
+	log    *os.File
+	connOK bool
+}
+
+func newResilientWriter(conn net.Conn, log *os.File) *resilientWriter {
+	return &resilientWriter{conn: conn, log: log, connOK: true}
+}
+
+func (rw *resilientWriter) Write(p []byte) (int, error) {
+	rw.mu.Lock()
+	defer rw.mu.Unlock()
+	if rw.connOK {
+		if _, err := rw.conn.Write(p); err != nil {
+			rw.connOK = false
+		}
+	}
+	if rw.log != nil {
+		rw.log.Write(p) // best-effort; ignore log errors
+	}
+	return len(p), nil // always succeed so child processes never get SIGPIPE
 }

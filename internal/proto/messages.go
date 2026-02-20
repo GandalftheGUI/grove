@@ -68,9 +68,8 @@ type Response struct {
 	Instances  []InstanceInfo `json:"instances,omitempty"`
 
 	// Fields used by ReqFinish response.
-	WorktreeDir      string   `json:"worktree_dir,omitempty"`
-	CompleteCommands []string `json:"complete_commands,omitempty"`
-	Branch           string   `json:"branch,omitempty"`
+	WorktreeDir string `json:"worktree_dir,omitempty"`
+	Branch      string `json:"branch,omitempty"`
 }
 
 // ─── Attach stream framing ────────────────────────────────────────────────────

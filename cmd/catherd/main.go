@@ -273,11 +273,37 @@ func cmdStart() {
 	project := args[0]
 	branch := args[1]
 
-	resp := mustRequest(proto.Request{
+	socketPath := daemonSocket()
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "catherd: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := writeRequest(conn, proto.Request{
 		Type:    proto.ReqStart,
 		Project: project,
 		Branch:  branch,
-	})
+	}); err != nil {
+		conn.Close()
+		fmt.Fprintf(os.Stderr, "catherd: %v\n", err)
+		os.Exit(1)
+	}
+
+	resp, err := readResponse(conn)
+	if err != nil || !resp.OK {
+		conn.Close()
+		msg := resp.Error
+		if msg == "" && err != nil {
+			msg = err.Error()
+		}
+		fmt.Fprintf(os.Stderr, "catherd: %s\n", msg)
+		os.Exit(1)
+	}
+
+	// Stream any setup output (clone, pull, bootstrap) the daemon buffered.
+	io.Copy(os.Stdout, conn)
+	conn.Close()
 
 	fmt.Printf("started instance %s\n", resp.InstanceID)
 
@@ -710,23 +736,31 @@ func cmdFinish() {
 	}
 	instanceID := os.Args[2]
 
-	resp := mustRequest(proto.Request{
-		Type:       proto.ReqFinish,
-		InstanceID: instanceID,
-	})
-
-	for _, cmdStr := range resp.CompleteCommands {
-		expanded := strings.ReplaceAll(cmdStr, "{{branch}}", resp.Branch)
-		fmt.Printf("$ %s\n", expanded)
-		c := exec.Command("sh", "-c", expanded)
-		c.Dir = resp.WorktreeDir
-		c.Stdout = os.Stdout
-		c.Stderr = os.Stderr
-		if err := c.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "catherd: finish: command failed: %v\n", err)
-			os.Exit(1)
-		}
+	socketPath := daemonSocket()
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "catherd: %v\n", err)
+		os.Exit(1)
 	}
+	defer conn.Close()
+
+	if err := writeRequest(conn, proto.Request{Type: proto.ReqFinish, InstanceID: instanceID}); err != nil {
+		fmt.Fprintf(os.Stderr, "catherd: %v\n", err)
+		os.Exit(1)
+	}
+
+	resp, err := readResponse(conn)
+	if err != nil || !resp.OK {
+		msg := resp.Error
+		if msg == "" && err != nil {
+			msg = err.Error()
+		}
+		fmt.Fprintf(os.Stderr, "catherd: %s\n", msg)
+		os.Exit(1)
+	}
+
+	// Stream complete command output from the daemon.
+	io.Copy(os.Stdout, conn)
 }
 
 func cmdMain() {
