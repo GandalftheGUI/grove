@@ -88,7 +88,7 @@ Project commands:
   main <project>           Print the main checkout path for a project
 
 Instance commands:
-  start <project> "<task>" [-d]  Start a new agent instance (attaches immediately; -d to skip)
+  start <project> <branch> [-d]  Start a new agent instance on <branch> (attaches immediately; -d to skip)
   attach <instance-id>           Attach terminal to an instance (detach: Ctrl-])
   stop <instance-id>             Kill the agent; instance stays in list as CRASHED
   restart <instance-id> [-d]     Restart agent in existing worktree (attaches immediately; -d to skip)
@@ -177,7 +177,7 @@ func cmdProjectCreate() {
 	}
 
 	yamlPath := filepath.Join(projectDir, "project.yaml")
-	content := fmt.Sprintf("name: %s\nrepo: %s\n\nbootstrap: []\n\nagent:\n  command: %s\n  args: []\n\ndev:\n  start: []\n",
+	content := fmt.Sprintf("name: %s\nrepo: %s\n\nbootstrap: []\n\nagent:\n  command: %s\n  args: []\n\ndev:\n  start: []\n\n# complete: commands run by `catherd finish`. Use {{branch}} for the branch name.\ncomplete:\n  - git push -u origin {{branch}}\n  # - gh pr create --title \"{{branch}}\" --fill\n",
 		name, *repo, *agent)
 	if err := os.WriteFile(yamlPath, []byte(content), 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "catherd: %v\n", err)
@@ -187,7 +187,7 @@ func cmdProjectCreate() {
 	fmt.Printf("created project %q\n", name)
 	fmt.Printf("config: %s\n", yamlPath)
 	fmt.Println("edit the file to set your repo URL and bootstrap steps, then run:")
-	fmt.Printf("  catherd start %s \"your task\"\n", name)
+	fmt.Printf("  catherd start %s <branch>\n", name)
 }
 
 // cmdProjectList handles: catherd project list
@@ -262,21 +262,21 @@ func cmdStart() {
 	detach := fs.Bool("detach", false, "do not attach after starting")
 	fs.BoolVar(detach, "d", false, "do not attach after starting")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: catherd start <project> \"<task>\" [-d]")
+		fmt.Fprintln(os.Stderr, "usage: catherd start <project> <branch> [-d]")
 	}
 	fs.Parse(os.Args[2:])
 	args := fs.Args()
 	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: catherd start <project> \"<task>\" [-d]")
+		fmt.Fprintln(os.Stderr, "usage: catherd start <project> <branch> [-d]")
 		os.Exit(1)
 	}
 	project := args[0]
-	task := args[1]
+	branch := args[1]
 
 	resp := mustRequest(proto.Request{
 		Type:    proto.ReqStart,
 		Project: project,
-		Task:    task,
+		Branch:  branch,
 	})
 
 	fmt.Printf("started instance %s\n", resp.InstanceID)
@@ -309,19 +309,15 @@ func cmdList() {
 		return
 	}
 
-	fmt.Printf("%-10s  %-12s  %-10s  %s\n", "ID", "PROJECT", "STATE", "TASK")
-	fmt.Printf("%-10s  %-12s  %-10s  %s\n", "----------", "------------", "----------", "----")
+	fmt.Printf("%-10s  %-12s  %-10s  %s\n", "ID", "PROJECT", "STATE", "BRANCH")
+	fmt.Printf("%-10s  %-12s  %-10s  %s\n", "----------", "------------", "----------", "------")
 	for _, inst := range instances {
-		task := inst.Task
-		if len(task) > 50 {
-			task = task[:47] + "..."
-		}
 		color := colorState(inst.State)
 		reset := ""
 		if color != "" {
 			reset = "\033[0m"
 		}
-		fmt.Printf("%-10s  %-12s  %s%-10s%s  %s\n", inst.ID, inst.Project, color, inst.State, reset, task)
+		fmt.Printf("%-10s  %-12s  %s%-10s%s  %s\n", inst.ID, inst.Project, color, inst.State, reset, inst.Branch)
 	}
 }
 
@@ -562,15 +558,15 @@ func drawWatch(fd int, socketPath string) {
 
 	fmt.Print("\033[H\033[2J")
 	fmt.Printf("%-*s  %-*s  %-*s  %-*s  %s\n",
-		idW, "ID", projW, "PROJECT", stateW, "STATE", uptimeW, "UPTIME", "TASK")
+		idW, "ID", projW, "PROJECT", stateW, "STATE", uptimeW, "UPTIME", "BRANCH")
 	fmt.Printf("%-*s  %-*s  %-*s  %-*s  %s\n",
-		idW, "----------", projW, "------------", stateW, "----------", uptimeW, "----------", "----")
+		idW, "----------", projW, "------------", stateW, "----------", uptimeW, "----------", "------")
 
 	now := time.Now().Unix()
 	for _, inst := range resp.Instances {
-		task := inst.Task
-		if len(task) > taskW {
-			task = task[:taskW-3] + "..."
+		branch := inst.Branch
+		if len(branch) > taskW {
+			branch = branch[:taskW-3] + "..."
 		}
 		uptimeEnd := now
 		if inst.EndedAt > 0 {
@@ -583,7 +579,7 @@ func drawWatch(fd int, socketPath string) {
 			projW, inst.Project,
 			stateColored, stateW, inst.State,
 			uptimeW, uptime,
-			task)
+			branch)
 	}
 
 	if len(resp.Instances) == 0 {
@@ -720,7 +716,7 @@ func cmdFinish() {
 	})
 
 	for _, cmdStr := range resp.CompleteCommands {
-		expanded := strings.ReplaceAll(cmdStr, "{{task}}", resp.Task)
+		expanded := strings.ReplaceAll(cmdStr, "{{branch}}", resp.Branch)
 		fmt.Printf("$ %s\n", expanded)
 		c := exec.Command("sh", "-c", expanded)
 		c.Dir = resp.WorktreeDir

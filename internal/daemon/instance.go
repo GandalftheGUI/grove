@@ -54,7 +54,6 @@ type Instance struct {
 	// Immutable after creation.
 	ID          string
 	Project     string
-	Task        string
 	Branch      string
 	WorktreeDir string
 	CreatedAt   time.Time
@@ -104,7 +103,6 @@ func (inst *Instance) Info() proto.InstanceInfo {
 	return proto.InstanceInfo{
 		ID:          inst.ID,
 		Project:     inst.Project,
-		Task:        inst.Task,
 		State:       state,
 		Branch:      inst.Branch,
 		WorktreeDir: inst.WorktreeDir,

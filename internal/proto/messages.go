@@ -44,7 +44,7 @@ const (
 type Request struct {
 	Type       string `json:"type"`
 	Project    string `json:"project,omitempty"`
-	Task       string `json:"task,omitempty"`
+	Branch     string `json:"branch,omitempty"`
 	InstanceID string `json:"instance_id,omitempty"`
 }
 
@@ -52,7 +52,6 @@ type Request struct {
 type InstanceInfo struct {
 	ID          string `json:"id"`
 	Project     string `json:"project"`
-	Task        string `json:"task"`
 	State       string `json:"state"`
 	Branch      string `json:"branch"`
 	WorktreeDir string `json:"worktree_dir"`
@@ -71,7 +70,7 @@ type Response struct {
 	// Fields used by ReqFinish response.
 	WorktreeDir      string   `json:"worktree_dir,omitempty"`
 	CompleteCommands []string `json:"complete_commands,omitempty"`
-	Task             string   `json:"task,omitempty"`
+	Branch           string   `json:"branch,omitempty"`
 }
 
 // ─── Attach stream framing ────────────────────────────────────────────────────

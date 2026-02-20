@@ -7,8 +7,8 @@
 #   catherd project create <name>
 # which writes to projects.local/ (git-ignored).
 #
-# Then start an agent instance:
-#   catherd start example_project "your task here"
+# Then start an agent instance on a branch:
+#   catherd start example_project feat/my-feature
 
 name: example_project
 repo: git@github.com:example/example_project.git
@@ -23,3 +23,16 @@ agent:
 dev:
   start:
     - npm run dev
+
+# complete: commands run when you call `catherd finish <id>`.
+# They execute inside the worktree. Use {{branch}} for the branch name.
+# Uncomment and adapt the steps you want.
+complete:
+  # Push the branch to the remote.
+  - git push -u origin {{branch}}
+
+  # Open a pull request (requires GitHub CLI: https://cli.github.com).
+  # - gh pr create --title "{{branch}}" --fill
+
+  # Or go straight to merge — squash into main and delete the branch.
+  # - gh pr create --title "{{branch}}" --fill && gh pr merge --squash --delete-branch

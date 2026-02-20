@@ -128,12 +128,17 @@ func createWorktree(p *Project, instanceID, branchName string) (string, error) {
 		return "", err
 	}
 
-	// git worktree add <path> -b <branch>
-	cmd := exec.Command("git", "-C", mainDir, "worktree", "add", worktreeDir, "-b", branchName)
+	// Try creating a new branch; if it already exists, check it out directly.
+	cmd := exec.Command("git", "-C", mainDir, "worktree", "add", "-b", branchName, worktreeDir)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git worktree add: %w", err)
+		cmd = exec.Command("git", "-C", mainDir, "worktree", "add", worktreeDir, branchName)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return "", fmt.Errorf("git worktree add: %w", err)
+		}
 	}
 
 	return worktreeDir, nil

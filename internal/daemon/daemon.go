@@ -155,6 +155,10 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 		respond(conn, proto.Response{OK: false, Error: "project name required"})
 		return
 	}
+	if req.Branch == "" {
+		respond(conn, proto.Response{OK: false, Error: "branch name required"})
+		return
+	}
 
 	p, err := loadProject(d.configDirs, d.rootDir, req.Project)
 	if err != nil {
@@ -178,10 +182,8 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 	instanceID := d.nextInstanceID()
 	d.mu.Unlock()
 
-	branchName := "agent/" + instanceID
-
-	// Create the git worktree.
-	worktreeDir, err := createWorktree(p, instanceID, branchName)
+	// Create the git worktree on the user-specified branch.
+	worktreeDir, err := createWorktree(p, instanceID, req.Branch)
 	if err != nil {
 		respond(conn, proto.Response{OK: false, Error: err.Error()})
 		return
@@ -189,7 +191,7 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 
 	// Run bootstrap commands in the new worktree.
 	if err := runBootstrap(p, worktreeDir); err != nil {
-		removeWorktree(p, instanceID, branchName)
+		removeWorktree(p, instanceID, req.Branch)
 		respond(conn, proto.Response{OK: false, Error: err.Error()})
 		return
 	}
@@ -199,8 +201,7 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 	inst := &Instance{
 		ID:           instanceID,
 		Project:      req.Project,
-		Task:         req.Task,
-		Branch:       branchName,
+		Branch:       req.Branch,
 		WorktreeDir:  worktreeDir,
 		CreatedAt:    time.Now(),
 		LogFile:      logFile,
@@ -214,7 +215,7 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 		agentCmd = "sh" // fallback for testing
 	}
 	if err := inst.startAgent(agentCmd, p.Agent.Args); err != nil {
-		removeWorktree(p, instanceID, branchName)
+		removeWorktree(p, instanceID, req.Branch)
 		respond(conn, proto.Response{OK: false, Error: err.Error()})
 		return
 	}
@@ -382,7 +383,7 @@ func (d *Daemon) handleFinish(conn net.Conn, req proto.Request) {
 	}
 
 	worktreeDir := inst.WorktreeDir
-	task := inst.Task
+	branch := inst.Branch
 	projectName := inst.Project
 
 	inst.mu.Lock()
@@ -420,7 +421,7 @@ func (d *Daemon) handleFinish(conn net.Conn, req proto.Request) {
 		OK:               true,
 		WorktreeDir:      worktreeDir,
 		CompleteCommands: completeCommands,
-		Task:             task,
+		Branch:           branch,
 	})
 }
 
@@ -552,7 +553,6 @@ func (d *Daemon) loadPersistedInstances() error {
 		inst := &Instance{
 			ID:           info.ID,
 			Project:      info.Project,
-			Task:         info.Task,
 			Branch:       info.Branch,
 			WorktreeDir:  info.WorktreeDir,
 			CreatedAt:    time.Unix(info.CreatedAt, 0),
