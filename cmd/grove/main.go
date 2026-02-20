@@ -27,6 +27,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -85,6 +86,7 @@ Project commands:
   project create <name> [--repo <url>]
                            Register a new project (name + repo URL)
   project list             List defined projects
+  project delete <name>    Remove a project and all its worktrees
   main <project>           Print the main checkout path for a project
 
 Instance commands:
@@ -110,7 +112,7 @@ Daemon commands:
 
 func cmdProject() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: grove project <create|list>")
+		fmt.Fprintln(os.Stderr, "usage: grove project <create|list|delete>")
 		os.Exit(1)
 	}
 	switch os.Args[2] {
@@ -118,6 +120,8 @@ func cmdProject() {
 		cmdProjectCreate()
 	case "list":
 		cmdProjectList()
+	case "delete":
+		cmdProjectDelete()
 	default:
 		fmt.Fprintf(os.Stderr, "grove: unknown project subcommand %q\n", os.Args[2])
 		os.Exit(1)
@@ -171,21 +175,22 @@ func cmdProjectCreate() {
 	fmt.Printf("  grove start %s <branch>\n", name)
 }
 
-// cmdProjectList handles: grove project list
-//
-// Scans ~/.grove/projects/ and prints a summary table.
-// This is a pure filesystem operation — no daemon required.
-func cmdProjectList() {
-	type row struct{ name, repo string }
-	var rows []row
+// projectEntry holds the parsed fields grove cares about from a registration.
+type projectEntry struct {
+	name string
+	repo string
+}
 
+// loadProjectEntries scans ~/.grove/projects/ and returns all registered
+// projects in directory order (alphabetical by folder name).
+func loadProjectEntries() []projectEntry {
 	projectsDir := filepath.Join(rootDir(), "projects")
 	dirEntries, err := os.ReadDir(projectsDir)
 	if err != nil {
-		fmt.Println("no projects defined")
-		return
+		return nil
 	}
 
+	var entries []projectEntry
 	for _, e := range dirEntries {
 		if !e.IsDir() {
 			continue
@@ -209,19 +214,83 @@ func cmdProjectList() {
 		if repo == "" {
 			repo = "(no repo)"
 		}
-		rows = append(rows, row{name, repo})
+		entries = append(entries, projectEntry{name, repo})
 	}
+	return entries
+}
 
-	if len(rows) == 0 {
+// resolveProject resolves a project argument that may be a 1-based index
+// (e.g. "1", "2") or a literal project name. Exits with an error message
+// if a numeric index is out of range.
+func resolveProject(arg string) string {
+	n, err := strconv.Atoi(arg)
+	if err != nil {
+		return arg // not a number — use as-is
+	}
+	entries := loadProjectEntries()
+	if n < 1 || n > len(entries) {
+		fmt.Fprintf(os.Stderr, "grove: project index %d out of range (have %d project(s))\n", n, len(entries))
+		os.Exit(1)
+	}
+	return entries[n-1].name
+}
+
+// cmdProjectList handles: grove project list
+//
+// Scans ~/.grove/projects/ and prints a numbered summary table.
+// This is a pure filesystem operation — no daemon required.
+func cmdProjectList() {
+	entries := loadProjectEntries()
+	if len(entries) == 0 {
 		fmt.Println("no projects defined")
 		return
 	}
 
-	fmt.Printf("%-20s  %s\n", "NAME", "REPO")
-	fmt.Printf("%-20s  %s\n", "--------------------", "----")
-	for _, r := range rows {
-		fmt.Printf("%-20s  %s\n", r.name, r.repo)
+	fmt.Printf("%-4s  %-20s  %s\n", "#", "NAME", "REPO")
+	fmt.Printf("%-4s  %-20s  %s\n", "----", "--------------------", "----")
+	for i, e := range entries {
+		fmt.Printf("%-4d  %-20s  %s\n", i+1, e.name, e.repo)
 	}
+}
+
+// cmdProjectDelete handles: grove project delete <name>
+//
+// Prompts for confirmation (project and all worktrees are removed), then
+// deletes the entire project directory under ~/.grove/projects/<name>/.
+func cmdProjectDelete() {
+	if len(os.Args) < 4 || os.Args[3] == "" {
+		fmt.Fprintln(os.Stderr, "usage: grove project delete <name>")
+		os.Exit(1)
+	}
+	name := os.Args[3]
+
+	projectDir := filepath.Join(rootDir(), "projects", name)
+	yamlPath := filepath.Join(projectDir, "project.yaml")
+	if _, err := os.Stat(yamlPath); err != nil {
+		if os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "grove: project %q not found\n", name)
+		} else {
+			fmt.Fprintf(os.Stderr, "grove: %v\n", err)
+		}
+		os.Exit(1)
+	}
+
+	fmt.Fprintf(os.Stderr, "This will remove project %q and all its worktrees.\n", name)
+	fmt.Print("Continue? [y/N] ")
+
+	reader := bufio.NewReader(os.Stdin)
+	answer, _ := reader.ReadString('\n')
+	answer = strings.TrimSpace(answer)
+	if answer != "y" && answer != "Y" {
+		fmt.Println("aborted")
+		return
+	}
+
+	if err := os.RemoveAll(projectDir); err != nil {
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("deleted project %q\n", name)
 }
 
 func cmdStart() {
@@ -237,7 +306,7 @@ func cmdStart() {
 		fmt.Fprintln(os.Stderr, "usage: grove start <project> <branch> [-d]")
 		os.Exit(1)
 	}
-	project := args[0]
+	project := resolveProject(args[0])
 	branch := args[1]
 
 	socketPath := daemonSocket()

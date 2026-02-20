@@ -171,6 +171,8 @@ dev:
 grove project create <name> [--repo <url>]
                          Register a new project (name + repo URL)
 grove project list     List defined projects
+grove project delete <name>
+                      Remove a project and all its worktrees (prompts to confirm)
 grove main <project>   Print the main checkout path for a project
 ```
 
