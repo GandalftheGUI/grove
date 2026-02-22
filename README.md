@@ -1,7 +1,7 @@
 # Grove
 
 A local daemon + CLI that supervises AI coding agents running in isolated Git
-worktrees and Docker containers on a single macOS machine.
+worktrees and Docker containers on a single machine.
 
 groved is **not** an AI model. It is a process supervisor and developer UX
 layer around existing agent CLIs (e.g. `claude`, `aider`).
@@ -12,9 +12,9 @@ layer around existing agent CLIs (e.g. `claude`, `aider`).
 
 ## Requirements
 
-- **macOS** (daemon management via LaunchAgent; Linux works without it)
 - **Docker** — required, no fallback. Every agent instance runs inside a container.
   Install: https://docs.docker.com/get-docker/
+- **macOS or Linux**
 
 ---
 
@@ -196,9 +196,9 @@ grove prune [--finished]
 ### Daemon commands
 
 ```
-grove daemon install    Register groved as a login LaunchAgent
-grove daemon uninstall  Remove the LaunchAgent
-grove daemon status     Show whether the LaunchAgent is installed and running
+grove daemon install    Register groved as a login LaunchAgent (macOS only)
+grove daemon uninstall  Remove the LaunchAgent (macOS only)
+grove daemon status     Show LaunchAgent status (macOS only)
 grove daemon logs [-f] [-n N]
                          Print daemon log (-f follow, -n tail lines)
 ```
@@ -274,8 +274,8 @@ starts. Use `-d` to skip and leave the agent running in the background.
 ## Example workflow
 
 ```bash
-# 0. Register the daemon (once, on macOS). Requires Docker to be running.
-grove daemon install
+# 0. Register the daemon (once). On macOS use the LaunchAgent; on Linux use systemd or let grove auto-start it.
+grove daemon install   # macOS only; on Linux: start groved manually or via systemd
 
 # 1. Register a project
 grove project create my-app --repo git@github.com:you/my-app.git
@@ -315,26 +315,48 @@ grove drop 2
 
 ---
 
-## Daemon management (macOS LaunchAgent)
+## Daemon management
 
-Register `groved` as a LaunchAgent so it starts automatically at login:
+`grove` auto-starts `groved` on demand when you run any command that requires
+it. For a persistent setup that survives reboots, register it with your init
+system.
+
+**macOS — LaunchAgent:**
 
 ```bash
-grove daemon install
+grove daemon install    # writes ~/Library/LaunchAgents/com.grove.daemon.plist
+grove daemon uninstall
+grove daemon status
 ```
 
-This writes `~/Library/LaunchAgents/com.grove.daemon.plist` and starts the
-daemon immediately. Daemon output goes to `~/.grove/daemon.log`.
+> On macOS the LaunchAgent is preferred over auto-start because it avoids PTY
+> permission errors from launching a detached background process directly.
+
+**Linux — systemd (example):**
+
+```ini
+# ~/.config/systemd/user/groved.service
+[Unit]
+Description=Grove daemon
+
+[Service]
+ExecStart=/usr/local/bin/groved
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user enable --now groved
+```
+
+Daemon output goes to `~/.grove/daemon.log` and is also accessible via:
 
 ```bash
 grove daemon logs -n 100      # last 100 lines
 grove daemon logs -f          # follow new lines
 ```
-
-> **Note:** `grove` also auto-starts the daemon on demand when you run any
-> command that requires it. The LaunchAgent approach is preferred on macOS
-> because it avoids PTY permission errors from launching a detached process
-> directly.
 
 Instance metadata is persisted to `~/.grove/instances/<id>.json`. When the
 daemon restarts, all instances reload with their last known state. Instances
@@ -349,9 +371,9 @@ until `grove drop` is called.
 Grove runs on macOS and Linux. Docker is required on both.
 
 The `grove daemon install/uninstall/status` commands are **macOS-only** — they
-use `launchctl` and `~/Library/LaunchAgents/`. On Linux, start `groved`
-manually or wire it into systemd; `grove` will auto-start the daemon on demand
-for the current session regardless.
+manage a LaunchAgent via `launchctl`. On Linux, manage `groved` with systemd
+or any other init system; `grove` will auto-start the daemon on demand for the
+current session regardless.
 
 ## What works well with Grove
 
