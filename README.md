@@ -6,6 +6,8 @@ worktrees on a single macOS machine.
 groved is **not** an AI model. It is a process supervisor and developer UX
 layer around existing agent CLIs (e.g. `claude`, `aider`).
 
+<img width="916" height="469" alt="Screenshot 2026-02-21 at 11 11 27 PM" src="https://github.com/user-attachments/assets/9ffbd86b-598d-4ba2-abc6-63d858b093de" />
+
 ---
 
 ## Binaries
