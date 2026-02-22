@@ -360,18 +360,30 @@ func cmdStart() {
 // has no .grove/project.yaml in its repository.  It asks the user whether to
 // create a boilerplate file, writes it if they agree, then exits with
 // instructions to edit, commit, and re-run.
+const (
+	colorBold   = "\033[1m"
+	colorDim    = "\033[2m"
+	colorGreen  = "\033[32m"
+	colorYellow = "\033[33m"
+	colorCyan   = "\033[36m"
+	colorReset  = "\033[0m"
+)
+
 func promptCreateProjectConfig(mainDir, projectName string) {
 	configPath := filepath.Join(mainDir, ".grove", "project.yaml")
-	fmt.Printf("No .grove/project.yaml found in %s.\n\n", projectName)
-	fmt.Printf("Commit this file to your repo so any groved user gets the\n")
-	fmt.Printf("same bootstrap, agent, and completion steps automatically.\n\n")
-	fmt.Print("Create a boilerplate now? [Y/n] ")
+
+	fmt.Printf("\n%s⚠  No .grove/project.yaml found in %s%s\n\n", colorYellow+colorBold, projectName, colorReset)
+	fmt.Printf("  This file tells grove how to bootstrap, run, and complete work\n")
+	fmt.Printf("  in this repo. Commit it once and every grove user gets the same\n")
+	fmt.Printf("  setup automatically — no per-machine configuration needed.\n\n")
+
+	fmt.Printf("%sCreate a boilerplate now?%s [Y/n] ", colorBold, colorReset)
 
 	reader := bufio.NewReader(os.Stdin)
 	answer, _ := reader.ReadString('\n')
 	answer = strings.TrimSpace(answer)
 	if answer != "" && answer != "y" && answer != "Y" {
-		fmt.Println("aborted")
+		fmt.Printf("%saborted%s\n", colorDim, colorReset)
 		return
 	}
 
@@ -384,11 +396,15 @@ func promptCreateProjectConfig(mainDir, projectName string) {
 		return
 	}
 
-	fmt.Printf("\nCreated %s\n\n", configPath)
-	fmt.Println("Next steps:")
-	fmt.Printf("  1. Edit the file to match your project\n")
-	fmt.Printf("  2. Commit it:  git -C %s add .grove/project.yaml && git -C %s commit -m 'Add grove project config'\n", mainDir, mainDir)
-	fmt.Printf("  3. Re-run:     grove start %s <branch>\n", projectName)
+	fmt.Printf("\n%s✓  Created%s %s%s%s\n\n", colorGreen+colorBold, colorReset, colorCyan, configPath, colorReset)
+	fmt.Printf("%sNext steps:%s\n\n", colorBold, colorReset)
+	fmt.Printf("  %s1.%s Edit the file to match your project\n", colorBold, colorReset)
+	fmt.Printf("     %s%s%s\n\n", colorDim, configPath, colorReset)
+	fmt.Printf("  %s2.%s Commit it\n", colorBold, colorReset)
+	fmt.Printf("     %sgit -C %s add .grove/project.yaml%s\n", colorDim, mainDir, colorReset)
+	fmt.Printf("     %sgit -C %s commit -m 'Add grove project config'%s\n\n", colorDim, mainDir, colorReset)
+	fmt.Printf("  %s3.%s Re-run\n", colorBold, colorReset)
+	fmt.Printf("     %sgrove start %s <branch>%s\n\n", colorDim, projectName, colorReset)
 }
 
 // projectConfigBoilerplate is written to .grove/project.yaml when a project
@@ -400,7 +416,6 @@ const projectConfigBoilerplate = `# .grove/project.yaml
 # Commit this file so everyone using Grove gets the same setup automatically.
 # https://github.com/ianremillard/grove
 # ─────────────────────────────────────────────────────────────────────────────
-name: my-project
 
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
 # Commands run once in each fresh worktree before the agent starts.
