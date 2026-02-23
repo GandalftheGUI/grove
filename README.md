@@ -2,7 +2,7 @@
 
 Grove is a local orchestration system that runs and supervises multiple AI coding agents in isolated Git worktrees and Docker containers, with robust process supervision and PTY streaming.
 
-Perfect for developers wanting safe parallel agent workflows on a single machine.
+*Perfect for developers wanting safe parallel agent workflows on a single machine.*
 
 > Think: tmux + git worktree + Docker, purpose-built for AI agents.
 
