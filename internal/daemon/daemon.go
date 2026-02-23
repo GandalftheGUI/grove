@@ -287,8 +287,14 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 		ComposeProject: composeProject,
 	}
 
-	// Start the agent in a PTY via docker exec.
-	if err := inst.startAgent(agentCmd, p.Agent.Args); err != nil {
+	// Build the agent environment: env file is the base, request-level
+	// values (from the CLI prompt or host env) override.
+	agentEnv := loadEnvFile(d.rootDir)
+	for k, v := range req.AgentEnv {
+		agentEnv[k] = v
+	}
+
+	if err := inst.startAgent(agentCmd, p.Agent.Args, agentEnv); err != nil {
 		stopContainer(containerName, composeProject)
 		removeWorktree(p, instanceID, req.Branch)
 		log.Printf("start failed: stage=agent-launch project=%s branch=%s instance=%s worktree=%s elapsed=%s err=%v",
@@ -660,7 +666,12 @@ func (d *Daemon) handleRestart(conn net.Conn, req proto.Request) {
 	inst.killed = false
 	inst.mu.Unlock()
 
-	if err := inst.startAgent(agentCmd, p.Agent.Args); err != nil {
+	agentEnv := loadEnvFile(d.rootDir)
+	for k, v := range req.AgentEnv {
+		agentEnv[k] = v
+	}
+
+	if err := inst.startAgent(agentCmd, p.Agent.Args, agentEnv); err != nil {
 		respond(conn, proto.Response{OK: false, Error: err.Error()})
 		return
 	}

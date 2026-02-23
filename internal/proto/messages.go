@@ -48,6 +48,11 @@ type Request struct {
 	Project    string `json:"project,omitempty"`
 	Branch     string `json:"branch,omitempty"`
 	InstanceID string `json:"instance_id,omitempty"`
+
+	// AgentEnv carries environment variables that the client extracted on the
+	// host (e.g. OAuth tokens from the macOS Keychain) and that must be
+	// injected into the agent's docker exec session.
+	AgentEnv map[string]string `json:"agent_env,omitempty"`
 }
 
 // InstanceInfo is a point-in-time snapshot of an instance's metadata.

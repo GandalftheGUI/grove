@@ -283,8 +283,23 @@ func cmdProjectDelete() {
 		os.Exit(1)
 	}
 
+	// Count live instances so the warning can be specific.
+	var instanceCount int
+	if resp, err := tryRequest(proto.Request{Type: proto.ReqList}); err == nil {
+		for _, inst := range resp.Instances {
+			if inst.Project == name {
+				instanceCount++
+			}
+		}
+	}
+
 	fmt.Printf("\n%s⚠  Remove project%s %s%q%s\n\n", colorYellow+colorBold, colorReset, colorCyan, name, colorReset)
-	fmt.Printf("  This will delete the project and %sall its worktrees%s.\n\n", colorBold, colorReset)
+	if instanceCount > 0 {
+		fmt.Printf("  This will %sstop and remove %d instance(s)%s, delete all worktrees,\n", colorBold, instanceCount, colorReset)
+		fmt.Printf("  and remove the project.\n\n")
+	} else {
+		fmt.Printf("  This will delete the project and %sall its worktrees%s.\n\n", colorBold, colorReset)
+	}
 	fmt.Printf("%sContinue?%s [y/N] ", colorBold, colorReset)
 
 	reader := bufio.NewReader(os.Stdin)
@@ -293,6 +308,16 @@ func cmdProjectDelete() {
 	if answer != "y" && answer != "Y" {
 		fmt.Printf("%saborted%s\n", colorDim, colorReset)
 		return
+	}
+
+	// Drop all instances belonging to this project before removing the
+	// project directory, so they don't linger in watch/list.
+	if resp, err := tryRequest(proto.Request{Type: proto.ReqList}); err == nil {
+		for _, inst := range resp.Instances {
+			if inst.Project == name {
+				tryRequest(proto.Request{Type: proto.ReqDrop, InstanceID: inst.ID})
+			}
+		}
 	}
 
 	if err := os.RemoveAll(projectDir); err != nil {
@@ -334,6 +359,8 @@ func cmdStart() {
 	project := resolveProject(args[0])
 	branch := args[1]
 
+	agentEnv := ensureAgentCredentials(project)
+
 	socketPath := daemonSocket()
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
@@ -342,9 +369,10 @@ func cmdStart() {
 	}
 
 	if err := writeRequest(conn, proto.Request{
-		Type:    proto.ReqStart,
-		Project: project,
-		Branch:  branch,
+		Type:     proto.ReqStart,
+		Project:  project,
+		Branch:   branch,
+		AgentEnv: agentEnv,
 	}); err != nil {
 		conn.Close()
 		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
@@ -393,6 +421,96 @@ const (
 	colorCyan   = "\033[36m"
 	colorReset  = "\033[0m"
 )
+
+// ensureAgentCredentials checks whether the required credentials for the
+// project's agent are available. If not, it prompts the user interactively
+// and saves the token to ~/.grove/env. Returns env vars to pass through the
+// request for this session.
+func ensureAgentCredentials(project string) map[string]string {
+	agentCmd := detectAgentCommand(project)
+	if agentCmd != "claude" {
+		return nil
+	}
+
+	root := rootDir()
+	envFile := loadCLIEnvFile(root)
+
+	// Check all possible sources for a Claude token.
+	if envFile["CLAUDE_CODE_OAUTH_TOKEN"] != "" ||
+		envFile["ANTHROPIC_API_KEY"] != "" ||
+		os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" ||
+		os.Getenv("ANTHROPIC_API_KEY") != "" {
+		return nil
+	}
+
+	// No token found — prompt the user.
+	fmt.Printf("\n%sClaude authentication required.%s\n\n", colorYellow+colorBold, colorReset)
+	fmt.Printf("Generate a long-lived token by running:\n\n")
+	fmt.Printf("    %sclaude setup-token%s\n\n", colorCyan, colorReset)
+	fmt.Printf("Then paste the token below.\n\n")
+	fmt.Printf("%sToken%s (or Enter to skip): ", colorBold, colorReset)
+
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		return nil
+	}
+	token := strings.TrimSpace(scanner.Text())
+	if token == "" {
+		return nil
+	}
+
+	// Save to ~/.grove/env so the user never has to do this again.
+	envPath := filepath.Join(root, "env")
+	f, err := os.OpenFile(envPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err == nil {
+		fmt.Fprintf(f, "CLAUDE_CODE_OAUTH_TOKEN=%s\n", token)
+		f.Close()
+		fmt.Printf("\n%s✓  Saved to %s%s\n\n", colorGreen, envPath, colorReset)
+	}
+
+	return map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": token}
+}
+
+// detectAgentCommand reads the project's grove.yaml to determine the agent
+// command. Returns "" if the file doesn't exist or has no agent configured.
+func detectAgentCommand(project string) string {
+	root := rootDir()
+	groveYAML := filepath.Join(root, "projects", project, "main", "grove.yaml")
+	data, err := os.ReadFile(groveYAML)
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		Agent struct {
+			Command string `yaml:"command"`
+		} `yaml:"agent"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return ""
+	}
+	return cfg.Agent.Command
+}
+
+// loadCLIEnvFile is a simple dotenv parser matching the daemon's loadEnvFile.
+func loadCLIEnvFile(root string) map[string]string {
+	env := map[string]string{}
+	data, err := os.ReadFile(filepath.Join(root, "env"))
+	if err != nil {
+		return env
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		env[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+	return env
+}
 
 // warnIfDockerUnavailable prints a human-readable error to stderr when Docker
 // is not running or not installed.  Called after a daemon startup failure so
@@ -1028,9 +1146,24 @@ func cmdRestart() {
 	}
 	instanceID := args[0]
 
+	// Look up the instance's project so we can check credentials.
+	listResp := mustRequest(proto.Request{Type: proto.ReqList})
+	var projectName string
+	for _, inst := range listResp.Instances {
+		if inst.ID == instanceID {
+			projectName = inst.Project
+			break
+		}
+	}
+	var agentEnv map[string]string
+	if projectName != "" {
+		agentEnv = ensureAgentCredentials(projectName)
+	}
+
 	mustRequest(proto.Request{
 		Type:       proto.ReqRestart,
 		InstanceID: instanceID,
+		AgentEnv:   agentEnv,
 	})
 
 	fmt.Printf("\n%s✓  Restarted%s %s%s%s\n\n", colorGreen+colorBold, colorReset, colorCyan, instanceID, colorReset)
@@ -1608,6 +1741,31 @@ func pingDaemon(socketPath string) bool {
 	}
 	resp, err := readResponse(conn)
 	return err == nil && resp.OK
+}
+
+// tryRequest sends a request to the daemon and returns the response.
+// Unlike mustRequest it returns an error instead of exiting, so callers
+// can tolerate a daemon that isn't running.
+func tryRequest(req proto.Request) (proto.Response, error) {
+	root := rootDir()
+	sock := filepath.Join(root, "groved.sock")
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		return proto.Response{}, err
+	}
+	defer conn.Close()
+
+	if err := writeRequest(conn, req); err != nil {
+		return proto.Response{}, err
+	}
+	resp, err := readResponse(conn)
+	if err != nil {
+		return proto.Response{}, err
+	}
+	if !resp.OK {
+		return resp, fmt.Errorf("%s", resp.Error)
+	}
+	return resp, nil
 }
 
 // mustRequest sends a request to the daemon and returns the response, exiting

@@ -69,6 +69,48 @@ go build -o bin/grove  ./cmd/grove
 
 ---
 
+## Agent credentials
+
+Grove runs AI agents (like Claude) inside Docker containers. Since the
+container can't access your host's credential store (e.g. macOS Keychain),
+you need to provide an authentication token.
+
+**First-time setup — grove prompts you automatically.** The first time you
+`grove start` a project that uses `claude`, grove will ask you to generate
+and paste a token:
+
+```
+Claude authentication required.
+
+Generate a long-lived token by running:
+
+    claude setup-token
+
+Then paste the token below.
+
+Token (or Enter to skip):
+```
+
+The token is saved to `~/.grove/env` and used for all future sessions.
+
+**Manual setup** (if you prefer):
+
+```bash
+claude setup-token          # generates a token valid for 1 year
+echo "CLAUDE_CODE_OAUTH_TOKEN=<paste-token>" >> ~/.grove/env
+```
+
+**Alternative — API key auth:**
+
+```bash
+echo "ANTHROPIC_API_KEY=sk-ant-api03-..." >> ~/.grove/env
+```
+
+The `~/.grove/env` file uses dotenv format (`KEY=VALUE`, one per line, `#`
+comments). It is created with `0600` permissions (owner-only read/write).
+
+---
+
 ## Project config
 
 Project configuration has two parts: a **registration** on your machine and an
@@ -106,7 +148,8 @@ container:
 #   service: app        # service to exec into; default "app"
 #   workdir: /app
 
-# Agent credentials are mounted automatically — no re-authentication needed:
+# Agent credentials are injected automatically from ~/.grove/env.
+# Config directories are also mounted:
 #   claude → ~/.claude    aider → ~/.aider
 #
 # Mount additional host paths (~/... maps to /root/... in the container):
@@ -151,6 +194,7 @@ finish:
 
 ```
 ~/.grove/                        ← data root (GROVE_ROOT)
+├─ env                  ← agent credentials (dotenv format, 0600)
 ├─ projects/
 │  └─ <project-name>/
 │     ├─ project.yaml   ← registration (name + repo URL)

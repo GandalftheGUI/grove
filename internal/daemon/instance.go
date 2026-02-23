@@ -131,7 +131,7 @@ func (inst *Instance) persistMeta(instancesDir string) {
 //
 // destroy() kills the docker exec process; the container keeps running so that
 // restart works by starting a new docker exec in the same container.
-func (inst *Instance) startAgent(agentCmd string, agentArgs []string) error {
+func (inst *Instance) startAgent(agentCmd string, agentArgs []string, extraEnv map[string]string) error {
 	// bash in sh mode resets PS1 during initialisation; PROMPT_COMMAND fires
 	// before every prompt and is not reset, so it reliably overrides PS1 for
 	// shell sessions.  Agents like claude/aider ignore both variables.
@@ -142,10 +142,13 @@ func (inst *Instance) startAgent(agentCmd string, agentArgs []string) error {
 		"-e", "TERM=xterm-256color",
 		"-e", "PROMPT_COMMAND=" + promptCmd,
 	}
-	// Run agent as root with HOME=/root so it sees credentials mounted at
+	// Run agent as root with HOME=/root so it sees config mounted at
 	// /root/.claude and /root/.claude.json (many images use a non-root default user).
 	if agentCmd == "claude" || agentCmd == "aider" {
 		dockerArgs = append(dockerArgs, "-u", "root", "-e", "HOME=/root")
+	}
+	for k, v := range extraEnv {
+		dockerArgs = append(dockerArgs, "-e", k+"="+v)
 	}
 	dockerArgs = append(dockerArgs, inst.ContainerID, agentCmd)
 	dockerArgs = append(dockerArgs, agentArgs...)
