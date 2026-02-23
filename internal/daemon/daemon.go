@@ -657,11 +657,6 @@ func (d *Daemon) handleRestart(conn net.Conn, req proto.Request) {
 		log.Printf("warning: could not read grove.yaml for %s: %v", inst.Project, err)
 	}
 
-	// Non-fatal pull; output goes to daemon log only.
-	if err := pullMain(p, log.Writer()); err != nil {
-		log.Printf("warning: git pull failed for %s: %v", inst.Project, err)
-	}
-
 	agentCmd := p.Agent.Command
 	if agentCmd == "" {
 		agentCmd = "sh"
