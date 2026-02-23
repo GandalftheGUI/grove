@@ -1,6 +1,6 @@
 # Grove
 
-Grove is a local supervisor for running multiple AI coding agents in parallel — safely and reproducibly — on a single machine.
+Grove is a local supervisor for running multiple AI coding agents in parallel _safely and reproducibly_ on a single machine.
 
 It manages Git worktrees + Docker containers + PTY sessions so each agent runs in a fully isolated environment with its own branch, dependencies, and state, without manual setup or cleanup.
 
