@@ -227,7 +227,7 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 	}
 
 	// Create the git worktree on the user-specified branch.
-	worktreeDir, err := createWorktree(p, instanceID, req.Branch)
+	worktreeDir, err := createWorktree(p, instanceID, req.Branch, setupW)
 	if err != nil {
 		log.Printf("start failed: stage=worktree project=%s branch=%s instance=%s main_dir=%s elapsed=%s err=%v",
 			req.Project, req.Branch, instanceID, p.MainDir(), time.Since(startedAt).Round(time.Millisecond), err)
@@ -496,8 +496,10 @@ func (d *Daemon) handleFinish(conn net.Conn, req proto.Request) {
 		inst.state = proto.StateFinished
 		inst.mu.Unlock()
 	case proto.StateFinished:
-		// Already finished; nothing to do.
+		// Already finished; respond and skip finish commands.
 		inst.mu.Unlock()
+		respond(conn, proto.Response{OK: true, WorktreeDir: worktreeDir, Branch: branch})
+		return
 	default:
 		// Agent is alive; request finish and wait for ptyReader to exit.
 		inst.finishRequest = true

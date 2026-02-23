@@ -33,7 +33,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -405,22 +404,3 @@ func (inst *Instance) destroy() {
 	}
 }
 
-// envWith returns a copy of base with the given key=value pairs applied,
-// replacing any existing entry for the same key.
-func envWith(base []string, overrides ...string) []string {
-	skip := make(map[string]bool, len(overrides))
-	for _, kv := range overrides {
-		if i := strings.IndexByte(kv, '='); i > 0 {
-			skip[kv[:i]] = true
-		}
-	}
-	env := make([]string, 0, len(base)+len(overrides))
-	env = append(env, overrides...)
-	for _, kv := range base {
-		if i := strings.IndexByte(kv, '='); i > 0 && skip[kv[:i]] {
-			continue
-		}
-		env = append(env, kv)
-	}
-	return env
-}

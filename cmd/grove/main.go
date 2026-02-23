@@ -21,7 +21,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -379,7 +378,30 @@ func cmdStart() {
 		os.Exit(1)
 	}
 
+	// Show a throbber while the daemon starts the container and shell (clone, container, start commands, agent install).
+	stopThrobber := make(chan struct{})
+	throbberDone := make(chan struct{})
+	go func() {
+		defer close(throbberDone)
+		frames := []rune(`|/-\`)
+		i := 0
+		for {
+			select {
+			case <-stopThrobber:
+				// Clear the throbber line so setup output or success message starts clean.
+				fmt.Fprint(os.Stderr, "\r  \033[K")
+				return
+			default:
+				fmt.Fprintf(os.Stderr, "\r  Starting instance %c  ", frames[i])
+				i = (i + 1) % len(frames)
+				time.Sleep(120 * time.Millisecond)
+			}
+		}
+	}()
+
 	resp, err := readResponse(conn)
+	close(stopThrobber)
+	<-throbberDone
 	if err != nil {
 		conn.Close()
 		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
@@ -426,24 +448,44 @@ const (
 // project's agent are available. If not, it prompts the user interactively
 // and saves the token to ~/.grove/env. Returns env vars to pass through the
 // request for this session.
+//
+// Tokens found only in the shell environment (os.Getenv) are explicitly
+// forwarded via the return map because the daemon runs as a LaunchAgent and
+// does not inherit the user's shell environment.
 func ensureAgentCredentials(project string) map[string]string {
 	agentCmd := detectAgentCommand(project)
-	if agentCmd != "claude" {
+	// Skip only when we know for certain it is not a claude agent.
+	// If detectAgentCommand returns "" (grove.yaml unreadable, e.g. first run
+	// before the repo is cloned), we still check — claude is the default and
+	// skipping silently would leave the container without credentials.
+	if agentCmd != "" && agentCmd != "claude" {
 		return nil
 	}
 
 	root := rootDir()
 	envFile := loadCLIEnvFile(root)
 
-	// Check all possible sources for a Claude token.
-	if envFile["CLAUDE_CODE_OAUTH_TOKEN"] != "" ||
-		envFile["ANTHROPIC_API_KEY"] != "" ||
-		os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" ||
-		os.Getenv("ANTHROPIC_API_KEY") != "" {
+	// If a token is already persisted in ~/.grove/env, the daemon will inject
+	// it directly — no need to echo it back through the request.
+	if envFile["CLAUDE_CODE_OAUTH_TOKEN"] != "" || envFile["ANTHROPIC_API_KEY"] != "" {
 		return nil
 	}
 
-	// No token found — prompt the user.
+	// Token found only in the shell environment: forward it explicitly so the
+	// daemon (which runs without the user's shell env) can inject it into the
+	// container.
+	agentEnv := map[string]string{}
+	if v := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"); v != "" {
+		agentEnv["CLAUDE_CODE_OAUTH_TOKEN"] = v
+	}
+	if v := os.Getenv("ANTHROPIC_API_KEY"); v != "" {
+		agentEnv["ANTHROPIC_API_KEY"] = v
+	}
+	if len(agentEnv) > 0 {
+		return agentEnv
+	}
+
+	// No token found anywhere — prompt the user.
 	fmt.Printf("\n%sClaude authentication required.%s\n\n", colorYellow+colorBold, colorReset)
 	fmt.Printf("Generate a long-lived token by running:\n\n")
 	fmt.Printf("    %sclaude setup-token%s\n\n", colorCyan, colorReset)
@@ -761,7 +803,7 @@ func doAttach(instanceID string) {
 			if n > 0 {
 				for i := 0; i < n; i++ {
 					if buf[i] == 0x1D {
-						sendFrame(conn, proto.AttachFrameDetach, nil)
+						proto.WriteFrame(conn, proto.AttachFrameDetach, nil)
 						select {
 						case done <- struct{}{}:
 						default:
@@ -769,7 +811,7 @@ func doAttach(instanceID string) {
 						return
 					}
 				}
-				sendFrame(conn, proto.AttachFrameData, buf[:n])
+				proto.WriteFrame(conn, proto.AttachFrameData, buf[:n])
 			}
 			if err != nil {
 				select {
@@ -791,7 +833,7 @@ func doAttach(instanceID string) {
 				payload := make([]byte, 4)
 				binary.BigEndian.PutUint16(payload[0:2], uint16(cols))
 				binary.BigEndian.PutUint16(payload[2:4], uint16(rows))
-				sendFrame(conn, proto.AttachFrameResize, payload)
+				proto.WriteFrame(conn, proto.AttachFrameResize, payload)
 			}
 		}
 	}()
@@ -801,7 +843,7 @@ func doAttach(instanceID string) {
 		payload := make([]byte, 4)
 		binary.BigEndian.PutUint16(payload[0:2], uint16(cols))
 		binary.BigEndian.PutUint16(payload[2:4], uint16(rows))
-		sendFrame(conn, proto.AttachFrameResize, payload)
+		proto.WriteFrame(conn, proto.AttachFrameResize, payload)
 	}
 
 	<-done
@@ -1821,17 +1863,3 @@ func readResponse(conn net.Conn) (proto.Response, error) {
 	return resp, nil
 }
 
-// sendFrame writes a single length-prefixed frame to w.
-// [1 byte type][4 byte big-endian length][payload]
-func sendFrame(w io.Writer, frameType byte, payload []byte) {
-	hdr := make([]byte, 5)
-	hdr[0] = frameType
-	binary.BigEndian.PutUint32(hdr[1:], uint32(len(payload)))
-	w.Write(hdr)
-	if len(payload) > 0 {
-		w.Write(payload)
-	}
-}
-
-// suppress unused import warning
-var _ = log.Printf

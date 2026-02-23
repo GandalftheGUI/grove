@@ -157,7 +157,7 @@ func pullMain(p *Project, w io.Writer) error {
 
 // createWorktree creates a new git worktree at worktreeDir on branch branchName,
 // branching off from the current HEAD of the main checkout.
-func createWorktree(p *Project, instanceID, branchName string) (string, error) {
+func createWorktree(p *Project, instanceID, branchName string, w io.Writer) (string, error) {
 	mainDir := p.MainDir()
 	worktreeDir := p.WorktreeDir(instanceID)
 
@@ -167,12 +167,12 @@ func createWorktree(p *Project, instanceID, branchName string) (string, error) {
 
 	// Try creating a new branch; if it already exists, check it out directly.
 	cmd := exec.Command("git", "-C", mainDir, "worktree", "add", "-b", branchName, worktreeDir)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = w
+	cmd.Stderr = w
 	if err := cmd.Run(); err != nil {
 		cmd = exec.Command("git", "-C", mainDir, "worktree", "add", worktreeDir, branchName)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		cmd.Stdout = w
+		cmd.Stderr = w
 		if err := cmd.Run(); err != nil {
 			return "", fmt.Errorf("git worktree add: %w", err)
 		}

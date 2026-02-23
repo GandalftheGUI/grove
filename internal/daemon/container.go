@@ -152,52 +152,32 @@ func ensureAgentInstalled(agentCmd, containerName string, w io.Writer) error {
 	var installScript, startSnippet string
 	switch agentCmd {
 	case "claude":
-		// Claude Code requires Node.js 18+.  We download a pre-built binary
-		// from nodejs.org — no package manager, no setup scripts, no GPG keys.
-		// Only curl (or wget) and tar are required, which are present in
-		// virtually every container image.  Alpine is handled separately via
-		// apk because its packages are already modern.
+		// Claude Code uses a native installer (npm install is deprecated).
+		// The installer writes the binary to $HOME/.local/bin/claude; we also
+		// symlink it into /usr/local/bin so that plain "docker exec ... claude"
+		// finds it without needing a login shell or PATH override.
+		// Alpine requires libgcc/libstdc++ for the native binary; all images
+		// need curl (installed here if missing via apt-get).
 		installScript = `set -e
-node_ok() {
-  command -v node >/dev/null 2>&1 || return 1
-  major=$(node --version 2>/dev/null | sed 's/v\([0-9]*\).*/\1/')
-  [ "${major:-0}" -ge 18 ]
-}
-if ! node_ok; then
-  echo "Installing Node.js 20 LTS..."
-  ARCH=$(uname -m)
-  case "$ARCH" in
-    x86_64)       NODE_ARCH=x64 ;;
-    aarch64|arm64) NODE_ARCH=arm64 ;;
-    *) echo "unsupported CPU architecture: $ARCH" >&2; exit 1 ;;
-  esac
-  NODE_URL="https://nodejs.org/dist/v20.11.0/node-v20.11.0-linux-${NODE_ARCH}.tar.gz"
-  if command -v apk >/dev/null 2>&1; then
-    apk add --no-cache nodejs npm
-  elif command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$NODE_URL" | tar -xz -C /usr/local --strip-components=1
-  elif command -v wget >/dev/null 2>&1; then
-    wget -qO- "$NODE_URL" | tar -xz -C /usr/local --strip-components=1
-  elif command -v apt-get >/dev/null 2>&1; then
+export HOME=/root
+export PATH=/root/.local/bin:$PATH
+if command -v apk >/dev/null 2>&1; then
+  apk add --no-cache libgcc libstdc++ ripgrep curl
+elif ! command -v curl >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then
     apt-get update -qq && apt-get install -y -qq curl
-    curl -fsSL "$NODE_URL" | tar -xz -C /usr/local --strip-components=1
   else
-    echo "Cannot install Node.js: no curl, wget, or apk found in this container." >&2
-    echo "Add node installation to 'start:' in grove.yaml" >&2
+    echo "Cannot install Claude: curl not found and no supported package manager." >&2
     exit 1
   fi
 fi
-npm install -g @anthropic-ai/claude-code
-# Symlink into ~/.local/bin so claude can find itself at the path stored in ~/.claude.json
-mkdir -p /root/.local/bin
-CLAUDE_BIN=$(command -v claude 2>/dev/null || true)
-if [ -n "$CLAUDE_BIN" ] && [ ! -e /root/.local/bin/claude ]; then
-  ln -sf "$CLAUDE_BIN" /root/.local/bin/claude
+curl -fsSL https://claude.ai/install.sh | bash
+if [ -f /root/.local/bin/claude ] && [ ! -e /usr/local/bin/claude ]; then
+  ln -sf /root/.local/bin/claude /usr/local/bin/claude
 fi`
 		startSnippet = `  start:
-    - curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
-    - apt-get install -y nodejs
-    - npm install -g @anthropic-ai/claude-code`
+    - curl -fsSL https://claude.ai/install.sh | bash
+    - ln -sf /root/.local/bin/claude /usr/local/bin/claude`
 	case "aider":
 		installScript = `set -e
 if ! command -v pip >/dev/null 2>&1 && ! command -v pip3 >/dev/null 2>&1; then
