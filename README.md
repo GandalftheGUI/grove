@@ -17,10 +17,10 @@ conflicts across dependencies, services, ports, and working state.
 
 Running AI coding agents in parallel is hard because they tend to:
 
-• Share global state (ports, databases, node_modules, env vars)
-• Mutate the same working tree
-• Leave behind half-configured environments
-• Be painful to stop, restart, or resume
+- Share global state (ports, databases, node_modules, env vars)
+- Mutate the same working tree
+- Leave behind half-configured environments
+- Be painful to stop, restart, or resume
 
 Grove makes isolation and lifecycle management first-class, so parallel agent
 workflows are safe and repeatable on a single machine.
@@ -29,12 +29,12 @@ workflows are safe and repeatable on a single machine.
 
 ## What Grove gives you
 
-• True isolation — agents run in dedicated worktrees and containers
-• Fast iteration — restarts reuse the existing container and worktree
-• Deterministic setup — project-owned grove.yaml defines containers, setup,
+- **True isolation** — agents run in dedicated worktrees and containers
+- **Fast iteration** — restarts reuse the existing container and worktree
+- **Deterministic setup** — project-owned grove.yaml defines containers, setup,
   checks, and finish steps
-• Process supervision — restartable, attachable agents with durable state
-• Low ceremony — one command to start, attach, check, finish, or drop
+- **Process supervision** — restartable, attachable agents with durable state
+- **Low ceremony** — one command to start, attach, check, finish, or drop
 
 If you want to go deeper, see [TECHNICAL.md](./docs/TECHNICAL.md)
 
