@@ -76,8 +76,8 @@ type Response struct {
 	Branch      string `json:"branch,omitempty"`
 
 	// InitPath is set when the daemon cannot start an instance because the
-	// project has no .grove/project.yaml in its repository.  The client
-	// should prompt the user and write a boilerplate file here.
+	// project has no grove.yaml in its repository.  The client should prompt
+	// the user and write a boilerplate file here.
 	InitPath string `json:"init_path,omitempty"`
 }
 

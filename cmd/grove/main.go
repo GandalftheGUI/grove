@@ -137,8 +137,8 @@ func cmdProject() {
 // cmdProjectCreate handles: grove project create <name> [--repo <url>]
 //
 // Writes a minimal registration (name + repo URL) to
-// ~/.grove/projects/<name>/project.yaml. All other config (bootstrap, agent,
-// complete) belongs in the project repo's own .grove/project.yaml.
+// ~/.grove/projects/<name>/project.yaml. All other config (container, agent,
+// start, finish, check) belongs in grove.yaml in the project repo.
 func cmdProjectCreate() {
 	if len(os.Args) < 4 || os.Args[3] == "" || os.Args[3][0] == '-' {
 		fmt.Fprintln(os.Stderr, "usage: grove project create <name> [--repo <url>]")
@@ -302,17 +302,33 @@ func cmdProjectDelete() {
 	fmt.Printf("\n%s✓  Deleted project%s %s%q%s\n\n", colorGreen+colorBold, colorReset, colorCyan, name, colorReset)
 }
 
-func cmdStart() {
-	fs := flag.NewFlagSet("start", flag.ExitOnError)
-	detach := fs.Bool("detach", false, "do not attach after starting")
-	fs.BoolVar(detach, "d", false, "do not attach after starting")
-	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: grove start <project> <branch> [-d]")
+// stripBoolFlag removes every occurrence of the given short/long flag from
+// args and returns (filtered, found). This lets the flag appear anywhere —
+// before or after positional arguments — regardless of flag.Parse stopping at
+// the first non-flag argument.
+func stripBoolFlag(args []string, short, long string) ([]string, bool) {
+	out := make([]string, 0, len(args))
+	found := false
+	for _, a := range args {
+		if a == "-"+short || a == "--"+short || a == "-"+long || a == "--"+long {
+			found = true
+		} else {
+			out = append(out, a)
+		}
 	}
-	fs.Parse(os.Args[2:])
+	return out, found
+}
+
+func cmdStart() {
+	rawArgs, detach := stripBoolFlag(os.Args[2:], "d", "detach")
+	fs := flag.NewFlagSet("start", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "usage: grove start <project|#> <branch> [-d]")
+	}
+	fs.Parse(rawArgs)
 	args := fs.Args()
 	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: grove start <project> <branch> [-d]")
+		fmt.Fprintln(os.Stderr, "usage: grove start <project|#> <branch> [-d]")
 		os.Exit(1)
 	}
 	project := resolveProject(args[0])
@@ -344,7 +360,7 @@ func cmdStart() {
 	if !resp.OK {
 		conn.Close()
 		if resp.InitPath != "" {
-			// Project exists but has no .grove/project.yaml — prompt the user.
+			// Project exists but has no grove.yaml — prompt the user to create one.
 			promptCreateProjectConfig(resp.InitPath, project)
 			os.Exit(1)
 		}
@@ -359,7 +375,7 @@ func cmdStart() {
 
 	fmt.Printf("\n%s✓  Started instance%s %s%s%s\n\n", colorGreen+colorBold, colorReset, colorCyan, resp.InstanceID, colorReset)
 
-	if !*detach {
+	if !detach {
 		doAttach(resp.InstanceID)
 	}
 }
@@ -371,19 +387,33 @@ func cmdStart() {
 const (
 	colorBold   = "\033[1m"
 	colorDim    = "\033[2m"
+	colorRed    = "\033[31m"
 	colorGreen  = "\033[32m"
 	colorYellow = "\033[33m"
 	colorCyan   = "\033[36m"
 	colorReset  = "\033[0m"
 )
 
-func promptCreateProjectConfig(mainDir, projectName string) {
-	configPath := filepath.Join(mainDir, ".grove", "project.yaml")
+// warnIfDockerUnavailable prints a human-readable error to stderr when Docker
+// is not running or not installed.  Called after a daemon startup failure so
+// the user knows why, without having to dig through daemon.log.
+func warnIfDockerUnavailable() {
+	cmd := exec.Command("docker", "info")
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if cmd.Run() != nil {
+		fmt.Fprintf(os.Stderr, "%sgrove requires Docker.%s Docker does not appear to be running.\n", colorRed+colorBold, colorReset)
+		fmt.Fprintf(os.Stderr, "  Start Docker Desktop or install it: https://docs.docker.com/get-docker/\n")
+	}
+}
 
-	fmt.Printf("\n%s⚠  No .grove/project.yaml found in %s%s\n\n", colorYellow+colorBold, projectName, colorReset)
-	fmt.Printf("  This file tells grove how to bootstrap, run, and complete work\n")
-	fmt.Printf("  in this repo. Commit it once and every grove user gets the same\n")
-	fmt.Printf("  setup automatically — no per-machine configuration needed.\n\n")
+func promptCreateProjectConfig(mainDir, projectName string) {
+	configPath := filepath.Join(mainDir, "grove.yaml")
+
+	fmt.Printf("\n%s⚠  No grove.yaml found in %s%s\n\n", colorYellow+colorBold, projectName, colorReset)
+	fmt.Printf("  This file tells grove how to set up the container, run the agent,\n")
+	fmt.Printf("  and finish the work. Commit it once and every grove user gets the\n")
+	fmt.Printf("  same setup automatically — no per-machine configuration needed.\n\n")
 
 	fmt.Printf("%sCreate a boilerplate now?%s [Y/n] ", colorBold, colorReset)
 
@@ -395,10 +425,6 @@ func promptCreateProjectConfig(mainDir, projectName string) {
 		return
 	}
 
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
-		return
-	}
 	if err := os.WriteFile(configPath, []byte(projectConfigBoilerplate), 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
 		return
@@ -409,16 +435,16 @@ func promptCreateProjectConfig(mainDir, projectName string) {
 	fmt.Printf("  %s1.%s Edit the file to match your project\n", colorBold, colorReset)
 	fmt.Printf("     %s%s%s\n\n", colorDim, configPath, colorReset)
 	fmt.Printf("  %s2.%s Commit it\n", colorBold, colorReset)
-	fmt.Printf("     %sgit -C %s add .grove/project.yaml%s\n", colorDim, mainDir, colorReset)
-	fmt.Printf("     %sgit -C %s commit -m 'Add grove project config'%s\n\n", colorDim, mainDir, colorReset)
+	fmt.Printf("     %sgit -C %s add grove.yaml%s\n", colorDim, mainDir, colorReset)
+	fmt.Printf("     %sgit -C %s commit -m 'Add grove.yaml'%s\n\n", colorDim, mainDir, colorReset)
 	fmt.Printf("  %s3.%s Re-run\n", colorBold, colorReset)
 	fmt.Printf("     %sgrove start %s <branch>%s\n\n", colorDim, projectName, colorReset)
 }
 
-// projectConfigBoilerplate is written to .grove/project.yaml when a project
+// projectConfigBoilerplate is written to grove.yaml (repo root) when a project
 // has none.  It is designed to be self-explanatory with enough comments and
 // examples that a developer can configure it without reading external docs.
-const projectConfigBoilerplate = `# .grove/project.yaml
+const projectConfigBoilerplate = `# grove.yaml
 # ─────────────────────────────────────────────────────────────────────────────
 # Grove project configuration.
 # Commit this file so everyone using Grove gets the same setup automatically.
@@ -457,7 +483,6 @@ container:
 #   - pip install -r requirements.txt && pre-commit install
 #   - bundle install
 start:
-  - ./scripts/bootstrap.sh
 
 # ── Agent ─────────────────────────────────────────────────────────────────────
 # The AI coding agent to run inside each worktree PTY.
@@ -484,7 +509,6 @@ agent:
 #   - go test ./...
 #   - make lint
 check:
-  - npm test
 
 # ── Finish ────────────────────────────────────────────────────────────────────
 # Commands run by 'grove finish <id>' inside the worktree directory.
@@ -991,13 +1015,12 @@ func cmdStop() {
 }
 
 func cmdRestart() {
+	rawArgs, detach := stripBoolFlag(os.Args[2:], "d", "detach")
 	fs := flag.NewFlagSet("restart", flag.ExitOnError)
-	detach := fs.Bool("detach", false, "do not attach after restarting")
-	fs.BoolVar(detach, "d", false, "do not attach after restarting")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: grove restart <instance-id> [-d]")
 	}
-	fs.Parse(os.Args[2:])
+	fs.Parse(rawArgs)
 	args := fs.Args()
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: grove restart <instance-id> [-d]")
@@ -1012,17 +1035,22 @@ func cmdRestart() {
 
 	fmt.Printf("\n%s✓  Restarted%s %s%s%s\n\n", colorGreen+colorBold, colorReset, colorCyan, instanceID, colorReset)
 
-	if !*detach {
+	if !detach {
 		doAttach(instanceID)
 	}
 }
 
 func cmdDrop() {
-	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: grove drop <instance-id>")
+	rawArgs, force := stripBoolFlag(os.Args[2:], "f", "force")
+	fs := flag.NewFlagSet("drop", flag.ExitOnError)
+	fs.Usage = func() { fmt.Fprintln(os.Stderr, "usage: grove drop <instance-id> [-f]") }
+	fs.Parse(rawArgs)
+	args := fs.Args()
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: grove drop <instance-id> [-f]")
 		os.Exit(1)
 	}
-	instanceID := os.Args[2]
+	instanceID := args[0]
 
 	// Fetch instance info to display worktree and branch before confirming.
 	listResp := mustRequest(proto.Request{Type: proto.ReqList})
@@ -1038,18 +1066,20 @@ func cmdDrop() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("\n%sInstance%s %s%s%s\n\n", colorBold, colorReset, colorCyan, instanceID, colorReset)
-	fmt.Printf("  %sProject:%s  %s%s%s\n", colorDim, colorReset, colorCyan, found.Project, colorReset)
-	fmt.Printf("  %sWorktree:%s %s%s%s\n", colorDim, colorReset, colorCyan, found.WorktreeDir, colorReset)
-	fmt.Printf("  %sBranch:%s   %s%s%s\n\n", colorDim, colorReset, colorCyan, found.Branch, colorReset)
-	fmt.Printf("%sDelete instance %q and worktree?%s [y/N] ", colorBold, found.Project, colorReset)
+	if !force {
+		fmt.Printf("\n%sInstance%s %s%s%s\n\n", colorBold, colorReset, colorCyan, instanceID, colorReset)
+		fmt.Printf("  %sProject:%s  %s%s%s\n", colorDim, colorReset, colorCyan, found.Project, colorReset)
+		fmt.Printf("  %sWorktree:%s %s%s%s\n", colorDim, colorReset, colorCyan, found.WorktreeDir, colorReset)
+		fmt.Printf("  %sBranch:%s   %s%s%s\n\n", colorDim, colorReset, colorCyan, found.Branch, colorReset)
+		fmt.Printf("%sDelete instance %q and worktree?%s [y/N] ", colorBold, found.Project, colorReset)
 
-	reader := bufio.NewReader(os.Stdin)
-	answer, _ := reader.ReadString('\n')
-	answer = strings.TrimSpace(answer)
-	if answer != "y" && answer != "Y" {
-		fmt.Printf("%saborted%s\n", colorDim, colorReset)
-		return
+		reader := bufio.NewReader(os.Stdin)
+		answer, _ := reader.ReadString('\n')
+		answer = strings.TrimSpace(answer)
+		if answer != "y" && answer != "Y" {
+			fmt.Printf("%saborted%s\n", colorDim, colorReset)
+			return
+		}
 	}
 
 	mustRequest(proto.Request{
@@ -1289,6 +1319,7 @@ func cmdDaemonInstall() {
 
 	root := rootDir()
 	logFile := filepath.Join(root, "daemon.log")
+	socketPath := filepath.Join(root, "groved.sock")
 
 	plist := buildPlist(daemonBin, root, logFile, os.Getenv("PATH"))
 
@@ -1316,6 +1347,19 @@ func cmdDaemonInstall() {
 	fmt.Printf("\n%s✓  groved LaunchAgent installed%s\n\n", colorGreen+colorBold, colorReset)
 	fmt.Printf("  %sPlist:%s %s%s%s\n", colorDim, colorReset, colorCyan, plistPath, colorReset)
 	fmt.Printf("  %sLog:%s   %s%s%s\n\n", colorDim, colorReset, colorCyan, logFile, colorReset)
+
+	// Verify the daemon actually started — the LaunchAgent is registered but
+	// the process may have exited immediately (e.g. Docker not running).
+	for i := 0; i < 20; i++ {
+		time.Sleep(150 * time.Millisecond)
+		if pingDaemon(socketPath) {
+			fmt.Printf("%s✓  daemon is running%s\n\n", colorGreen+colorBold, colorReset)
+			return
+		}
+	}
+	fmt.Fprintf(os.Stderr, "%s✗  daemon did not start%s\n\n", colorRed+colorBold, colorReset)
+	warnIfDockerUnavailable()
+	fmt.Fprintf(os.Stderr, "  Check the log for details: %s%s%s\n\n", colorCyan, logFile, colorReset)
 }
 
 func cmdDaemonUninstall() {
@@ -1546,6 +1590,7 @@ func ensureDaemon(root, socketPath string) {
 	}
 
 	fmt.Fprintln(os.Stderr, "grove: daemon did not start in time")
+	warnIfDockerUnavailable()
 	os.Exit(1)
 }
 

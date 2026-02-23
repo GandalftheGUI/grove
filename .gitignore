@@ -5,3 +5,4 @@ bin/
 # to run a self-contained daemon against a local project definition.
 testenv/
 .testenv/
+manual_testing

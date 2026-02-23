@@ -207,21 +207,20 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 		log.Printf("warning: git pull failed for %s: %v", req.Project, err)
 	}
 
-	// Overlay .grove/project.yaml from inside the repo if it exists.
+	// Overlay grove.yaml from the repo root if it exists.
 	// This is the canonical config location — teams commit it alongside their
-	// code so any groved user gets the right bootstrap/agent/complete setup.
+	// code so any grove user gets the right container/agent/start/finish setup.
 	inRepoFound, err := loadInRepoConfig(p)
 	if err != nil {
-		log.Printf("warning: could not read in-repo config for %s: %v", req.Project, err)
+		log.Printf("warning: could not read grove.yaml for %s: %v", req.Project, err)
 	}
 
-	// If there is no in-repo config the project is not configured enough to
-	// start.  Tell the client so it can prompt the user to create
-	// .grove/project.yaml.
+	// If there is no grove.yaml the project is not configured enough to start.
+	// Tell the client so it can prompt the user to create one.
 	if !inRepoFound {
 		respond(conn, proto.Response{
 			OK:       false,
-			Error:    "no .grove/project.yaml found in " + req.Project,
+			Error:    "no grove.yaml found in " + req.Project,
 			InitPath: p.MainDir(),
 		})
 		return
@@ -260,6 +259,21 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 		return
 	}
 
+	// Ensure the agent binary is available inside the container.
+	// For known agents (claude, aider) this auto-installs if missing.
+	agentCmd := p.Agent.Command
+	if agentCmd == "" {
+		agentCmd = "sh"
+	}
+	if err := ensureAgentInstalled(agentCmd, containerName, setupW); err != nil {
+		stopContainer(containerName, composeProject)
+		removeWorktree(p, instanceID, req.Branch)
+		log.Printf("start failed: stage=agent-install project=%s branch=%s instance=%s worktree=%s elapsed=%s err=%v",
+			req.Project, req.Branch, instanceID, worktreeDir, time.Since(startedAt).Round(time.Millisecond), err)
+		respond(conn, proto.Response{OK: false, Error: err.Error()})
+		return
+	}
+
 	inst := &Instance{
 		ID:             instanceID,
 		Project:        req.Project,
@@ -274,10 +288,6 @@ func (d *Daemon) handleStart(conn net.Conn, req proto.Request) {
 	}
 
 	// Start the agent in a PTY via docker exec.
-	agentCmd := p.Agent.Command
-	if agentCmd == "" {
-		agentCmd = "sh" // fallback for testing
-	}
 	if err := inst.startAgent(agentCmd, p.Agent.Args); err != nil {
 		stopContainer(containerName, composeProject)
 		removeWorktree(p, instanceID, req.Branch)
@@ -507,7 +517,7 @@ func (d *Daemon) handleFinish(conn net.Conn, req proto.Request) {
 		return
 	}
 	if _, err := loadInRepoConfig(p); err != nil {
-		log.Printf("warning: could not read in-repo config for %s: %v", projectName, err)
+		log.Printf("warning: could not read grove.yaml for %s: %v", projectName, err)
 	}
 	if len(p.Finish) == 0 {
 		stopContainer(inst.ContainerID, inst.ComposeProject)
@@ -578,10 +588,10 @@ func (d *Daemon) handleCheck(conn net.Conn, req proto.Request) {
 		return
 	}
 	if _, err := loadInRepoConfig(p); err != nil {
-		log.Printf("warning: could not read in-repo config for %s: %v", projectName, err)
+		log.Printf("warning: could not read grove.yaml for %s: %v", projectName, err)
 	}
 	if len(p.Check) == 0 {
-		respond(conn, proto.Response{OK: false, Error: "no check commands defined in .grove/project.yaml"})
+		respond(conn, proto.Response{OK: false, Error: "no check commands defined in grove.yaml"})
 		return
 	}
 

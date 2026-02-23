@@ -35,7 +35,12 @@ func main() {
 
 	d, err := daemon.New(*rootDir)
 	if err != nil {
-		log.Fatalf("daemon init: %v", err)
+		log.Printf("daemon init: %v", err)
+		// Exit 0 so launchd / systemd does not restart the daemon in a tight
+		// loop.  A configuration error (e.g. Docker not available) will not
+		// resolve itself on its own; the user must fix the problem and then
+		// re-run `grove daemon install` or restart the service manually.
+		os.Exit(0)
 	}
 
 	socketPath := filepath.Join(*rootDir, "groved.sock")

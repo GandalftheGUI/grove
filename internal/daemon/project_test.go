@@ -54,11 +54,11 @@ func TestLoadProjectNotFound(t *testing.T) {
 
 func TestLoadInRepoConfig(t *testing.T) {
 	dataDir := t.TempDir()
-	groveDir := filepath.Join(dataDir, "main", ".grove")
-	require.NoError(t, os.MkdirAll(groveDir, 0o755))
+	mainDir := filepath.Join(dataDir, "main")
+	require.NoError(t, os.MkdirAll(mainDir, 0o755))
 
 	yaml := "start:\n  - npm install\nagent:\n  command: aider\n  args: []\nfinish:\n  - git push\n"
-	require.NoError(t, os.WriteFile(filepath.Join(groveDir, "project.yaml"), []byte(yaml), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(mainDir, "grove.yaml"), []byte(yaml), 0o644))
 
 	p := &Project{DataDir: dataDir}
 	p.Agent.Command = "claude" // original value — should be overridden
@@ -80,12 +80,12 @@ func TestLoadInRepoConfigMissing(t *testing.T) {
 
 func TestLoadInRepoConfigPartialDoesNotWipeOtherFields(t *testing.T) {
 	dataDir := t.TempDir()
-	groveDir := filepath.Join(dataDir, "main", ".grove")
-	require.NoError(t, os.MkdirAll(groveDir, 0o755))
+	mainDir := filepath.Join(dataDir, "main")
+	require.NoError(t, os.MkdirAll(mainDir, 0o755))
 
 	// In-repo config only sets start; agent and finish are absent.
 	yaml := "start:\n  - make setup\n"
-	require.NoError(t, os.WriteFile(filepath.Join(groveDir, "project.yaml"), []byte(yaml), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(mainDir, "grove.yaml"), []byte(yaml), 0o644))
 
 	// Registration always starts with zero-value agent/finish — only
 	// in-repo config fills those in.

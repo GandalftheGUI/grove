@@ -141,7 +141,13 @@ func (inst *Instance) startAgent(agentCmd string, agentArgs []string) error {
 	dockerArgs := []string{"exec", "-it",
 		"-e", "TERM=xterm-256color",
 		"-e", "PROMPT_COMMAND=" + promptCmd,
-		inst.ContainerID, agentCmd}
+	}
+	// Run agent as root with HOME=/root so it sees credentials mounted at
+	// /root/.claude and /root/.claude.json (many images use a non-root default user).
+	if agentCmd == "claude" || agentCmd == "aider" {
+		dockerArgs = append(dockerArgs, "-u", "root", "-e", "HOME=/root")
+	}
+	dockerArgs = append(dockerArgs, inst.ContainerID, agentCmd)
 	dockerArgs = append(dockerArgs, agentArgs...)
 	cmd := exec.Command("docker", dockerArgs...)
 	// No cmd.Dir or cmd.Env — handled by the container.

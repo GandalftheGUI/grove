@@ -13,10 +13,11 @@ import (
 
 // ContainerConfig holds the Docker container or Compose settings for a project.
 type ContainerConfig struct {
-	Image   string `yaml:"image"`   // single container image (e.g. "ruby:3.3")
-	Compose string `yaml:"compose"` // path to docker-compose.yml (relative to repo root)
-	Service string `yaml:"service"` // compose service to exec into; default "app"
-	Workdir string `yaml:"workdir"` // working directory inside container; default "/app"
+	Image   string   `yaml:"image"`   // single container image (e.g. "ruby:3.3")
+	Compose string   `yaml:"compose"` // path to docker-compose.yml (relative to repo root)
+	Service string   `yaml:"service"` // compose service to exec into; default "app"
+	Workdir string   `yaml:"workdir"` // working directory inside container; default "/app"
+	Mounts  []string `yaml:"mounts"`  // extra host paths to bind-mount; ~/foo maps to /root/foo
 }
 
 // Project holds the parsed contents of a project.yaml file.
@@ -73,8 +74,8 @@ func (p *Project) WorktreeDir(instanceID string) string {
 }
 
 // loadProject reads the project registration from <dataRoot>/projects/<name>/project.yaml.
-// The registration only carries name and repo — all other config (bootstrap, agent,
-// complete) comes exclusively from the in-repo .grove/project.yaml.
+// The registration only carries name and repo — all other config (container, agent,
+// start, finish, check) comes exclusively from grove.yaml in the project repo.
 func loadProject(dataRoot, name string) (*Project, error) {
 	projectDir := filepath.Join(dataRoot, "projects", name)
 	yamlPath := filepath.Join(projectDir, "project.yaml")
@@ -193,30 +194,43 @@ func removeWorktree(p *Project, instanceID, branchName string) {
 	exec.Command("git", "-C", mainDir, "branch", "-D", branchName).Run()
 }
 
-// loadInRepoConfig reads .grove/project.yaml from the project's main clone
+// loadInRepoConfig reads grove.yaml from the root of the project's main clone
 // and overlays its fields onto p.  In-repo config takes precedence over the
 // registration so teams can commit authoritative settings alongside their code.
 //
 // Returns (true, nil) if the file was found and applied, (false, nil) if it
 // does not exist, or (false, err) on a parse error.
 func loadInRepoConfig(p *Project) (bool, error) {
-	inRepoPath := filepath.Join(p.MainDir(), ".grove", "project.yaml")
+	inRepoPath := filepath.Join(p.MainDir(), "grove.yaml")
 	data, err := os.ReadFile(inRepoPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
-		return false, fmt.Errorf("read .grove/project.yaml: %w", err)
+		return false, fmt.Errorf("read grove.yaml: %w", err)
 	}
 
 	var overlay Project
 	if err := yaml.Unmarshal(data, &overlay); err != nil {
-		return false, fmt.Errorf("parse .grove/project.yaml: %w", err)
+		return false, fmt.Errorf("parse grove.yaml: %w", err)
 	}
 
-	// Overlay: in-repo values win over the registration for each field present.
-	if overlay.Container != (ContainerConfig{}) {
-		p.Container = overlay.Container
+	// Overlay container config field by field so a partial in-repo config
+	// (e.g. only mounts:) merges with rather than replaces the registration.
+	if overlay.Container.Image != "" {
+		p.Container.Image = overlay.Container.Image
+	}
+	if overlay.Container.Compose != "" {
+		p.Container.Compose = overlay.Container.Compose
+	}
+	if overlay.Container.Service != "" {
+		p.Container.Service = overlay.Container.Service
+	}
+	if overlay.Container.Workdir != "" {
+		p.Container.Workdir = overlay.Container.Workdir
+	}
+	if len(overlay.Container.Mounts) > 0 {
+		p.Container.Mounts = overlay.Container.Mounts
 	}
 	if len(overlay.Start) > 0 {
 		p.Start = overlay.Start

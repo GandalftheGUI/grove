@@ -40,12 +40,13 @@ grove start my-project feat/dark-mode
    to get the repo URL
 2. Clones the repo (if needed) into `~/.grove/projects/my-project/main/`
 3. Runs `git pull` to sync to the latest remote HEAD
-4. Reads `.grove/project.yaml` from inside the cloned repo — the project-owned
+4. Reads `grove.yaml` from inside the cloned repo — the project-owned
    config that defines container image, start commands, agent, and finish steps;
    if missing, prompts you to create it
 5. Creates a Git worktree at `~/.grove/projects/my-project/worktrees/<id>/`
    on branch `feat/dark-mode`
-6. Starts a Docker container with the worktree bind-mounted inside it
+6. Starts a Docker container with the worktree bind-mounted inside it; agent
+   credentials (e.g. `~/.claude`) are mounted automatically
 7. Runs the `start` commands inside the container
 8. Allocates a PTY, runs the agent inside the container via `docker exec -it`,
    and attaches your terminal immediately (pass `-d` to skip)
@@ -83,7 +84,7 @@ name: my-app
 repo: git@github.com:example/my-app.git
 ```
 
-### In-repo config (`.grove/project.yaml` in your project)
+### In-repo config (`grove.yaml` in your project)
 
 The **authoritative source** for how to set up and run the project. Committed
 alongside your code so every grove user automatically gets the right container,
@@ -105,6 +106,15 @@ container:
 #   service: app        # service to exec into; default "app"
 #   workdir: /app
 
+# Agent credentials are mounted automatically — no re-authentication needed:
+#   claude → ~/.claude    aider → ~/.aider
+#
+# Mount additional host paths (~/... maps to /root/... in the container):
+# container:
+#   mounts:
+#     - ~/.gitconfig
+#     - ~/.ssh
+
 # ── Start ──────────────────────────────────────────────────────────────────────
 # Commands run once inside the container before the agent starts.
 start:
@@ -113,6 +123,10 @@ start:
 
 # ── Agent ──────────────────────────────────────────────────────────────────────
 # The AI coding agent. Runs inside the container via `docker exec -it`.
+# Grove auto-installs known agents if not present in the image:
+#   claude → npm install -g @anthropic-ai/claude-code  (requires node in image)
+#   aider  → pip install aider-chat                    (requires python in image)
+# For other agents, add the install command to start: above.
 agent:
   command: claude
   args: []
@@ -281,7 +295,7 @@ grove daemon install   # macOS only; on Linux: start groved manually or via syst
 grove project create my-app --repo git@github.com:you/my-app.git
 
 # 2. Start two parallel instances on different branches
-#    If the repo has no .grove/project.yaml, grove prompts you to create one.
+#    If the repo has no grove.yaml, grove prompts you to create one.
 grove start my-app feat/dark-mode -d
 grove start my-app feat/search    -d
 # Each gets its own container — isolated databases, ports, dependencies.
