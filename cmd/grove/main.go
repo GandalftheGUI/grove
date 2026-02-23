@@ -860,6 +860,8 @@ func doAttach(instanceID string) {
 
 	restore()
 	defer func() {}() // suppress second restore() from defer
+	// Reset terminal modes the agent may have left on (focus reporting, bracketed paste, etc.).
+	fmt.Fprint(os.Stdout, "\033[?1004l\033[?2004l")
 	fmt.Fprintf(os.Stdout, "\n[grove] detached from %s\n", instanceID)
 }
 
