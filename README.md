@@ -10,16 +10,6 @@ Grove is a local orchestration system that runs and supervises multiple AI codin
 
 ---
 
-## At a glance
-
-- **Isolation model**: “one agent = one worktree + one container” so agents can’t step on each other’s dependencies, services, ports, or working tree.
-- **Supervisor design**: a daemon over a Unix socket with persisted instance metadata, attach/detach UX, log buffering, and a live dashboard.
-- **Reproducibility**: project-owned `grove.yaml` defines container image, setup, checks, and finish steps and is committed with the repo.
-
-If you want to go deeper, see [TECHNICAL.md](./docs/TECHNICAL.md)
-
----
-
 ## Why Grove exists
 
 Running AI coding agents in parallel is hard because they tend to:
@@ -35,11 +25,13 @@ Grove solves this by making **“one agent = one worktree + one container”** a
 
 ## What Grove gives you
 
-- **True isolation**: Each agent runs in its own Docker container with its own Git worktree. No shared databases, ports, or dependencies.
+- **True isolation**:  “one agent = one worktree + one container” so agents can’t step on each other’s dependencies, services, ports, or working tree.
 - **Fast iteration**: Restarting an agent reuses the existing container and worktree—no re-install or re-clone.
 - **Deterministic setup**: Project-owned grove.yaml defines the container image, setup commands, agent, checks, and finish steps.
 - **Process supervision**: Agents are PTY-attached, restartable, and stateful across daemon restarts.
 - **Low ceremony**: One command to start, attach, detach, check, finish, or permanently drop an instance.
+
+If you want to go deeper, see [TECHNICAL.md](./docs/TECHNICAL.md)
 
 ---
 
