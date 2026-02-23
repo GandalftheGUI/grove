@@ -73,6 +73,8 @@ func main() {
 		cmdDaemon()
 	case "token":
 		cmdToken()
+	case "shell":
+		cmdShell()
 	default:
 		fmt.Fprintf(os.Stderr, "grove: unknown command %q\n", os.Args[1])
 		usage()
@@ -99,6 +101,7 @@ Instance commands:
   restart <instance-id> [-d]     Restart agent in existing worktree (attaches immediately; -d to skip)
   check <instance-id>            Run check commands concurrently; instance returns to WAITING
   finish <instance-id>           Run finish steps; instance stays as FINISHED
+  shell <instance-id> [shell]    Open an interactive shell in the instance container (default: sh)
   drop <instance-id>             Delete the worktree and branch permanently
   list [--active]                List all instances (--active: exclude FINISHED)
   logs <instance-id> [-f]        Print buffered output for an instance
@@ -1362,6 +1365,43 @@ func cmdDir() {
 	}
 	fmt.Fprintf(os.Stderr, "grove: instance not found: %s\n", id)
 	os.Exit(1)
+}
+
+func cmdShell() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: grove shell <instance-id> [shell]")
+		os.Exit(1)
+	}
+	instanceID := os.Args[2]
+	shell := "sh"
+	if len(os.Args) >= 4 {
+		shell = os.Args[3]
+	}
+
+	resp := mustRequest(proto.Request{Type: proto.ReqList})
+	var containerID string
+	for _, inst := range resp.Instances {
+		if inst.ID == instanceID {
+			containerID = inst.ContainerID
+			break
+		}
+	}
+	if containerID == "" {
+		fmt.Fprintf(os.Stderr, "grove: instance not found: %s\n", instanceID)
+		os.Exit(1)
+	}
+
+	cmd := exec.Command("docker", "exec", "-it", "-u", "root", "-e", "HOME=/root", containerID, shell)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		fmt.Fprintf(os.Stderr, "grove: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func cmdPrune() {
