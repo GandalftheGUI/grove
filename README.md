@@ -1,29 +1,15 @@
 # Grove
 
-Grove is a local supervisor for running multiple AI coding agents in parallel — safely and reproducibly — on a single machine.
+Grove is a local orchestration system for running and supervising multiple AI
+coding agents in parallel, with strong isolation and a fast, debuggable
+developer experience.
 
-It manages Git worktrees + Docker containers + PTY sessions so each agent runs in a fully isolated environment with its own branch, dependencies, and state, without manual setup or cleanup.
-
-Grove is not an AI model.
-It is infrastructure and developer UX around existing agent CLIs (e.g. claude, aider).
+Each agent runs in its own Git worktree and Docker container, preventing
+conflicts across dependencies, services, ports, and working state.
 
 > Think: tmux + git worktree + Docker, purpose-built for AI agents.
 
-<img width="916" height="469" alt="Screenshot 2026-02-21 at 11 11 27 PM" src="https://github.com/user-attachments/assets/9ffbd86b-598d-4ba2-abc6-63d858b093de" />
-
----
-
-## At a glance
-
-Grove makes “run multiple AI coding agents in parallel” feel like running parallel CI jobs — **isolated**, **restartable**, and **reproducible**.
-
-Highlights:
-
-- **Isolation model**: “one agent = one worktree + one container” so agents can’t step on each other’s dependencies, services, ports, or working tree.
-- **Supervisor design**: a daemon over a Unix socket with persisted instance metadata, attach/detach UX, log buffering, and a live dashboard.
-- **Reproducibility**: project-owned `grove.yaml` defines container image, setup, checks, and finish steps and is committed with the repo.
-
-If you want to go deeper, see `docs/TECHNICAL.md`.
+<img width="924" height="360" alt="image" src="https://github.com/user-attachments/assets/4c2e7d54-c75e-4114-87d1-2d39ba11ebd4" />
 
 ---
 
@@ -36,17 +22,21 @@ Running AI coding agents in parallel is hard because they tend to:
 - Leave behind half-configured environments
 - Be painful to stop, restart, or resume
 
-Grove solves this by making **“one agent = one worktree + one container”** a first-class abstraction.
+*Grove makes isolation and lifecycle management first-class, so parallel agent
+workflows are safe and repeatable on a single machine.*
 
 ---
 
 ## What Grove gives you
 
-- **True isolation**: Each agent runs in its own Docker container with its own Git worktree. No shared databases, ports, or dependencies.
-- **Fast iteration**: Restarting an agent reuses the existing container and worktree—no re-install or re-clone.
-- **Deterministic setup**: Project-owned grove.yaml defines the container image, setup commands, agent, checks, and finish steps.
-- **Process supervision**: Agents are PTY-attached, restartable, and stateful across daemon restarts.
-- **Low ceremony**: One command to start, attach, detach, check, finish, or permanently drop an instance.
+- **True isolation** — agents run in dedicated worktrees and containers
+- **Fast iteration** — restarts reuse the existing container and worktree
+- **Deterministic setup** — project-owned grove.yaml defines containers, setup,
+  checks, and finish steps
+- **Process supervision** — restartable, attachable agents with durable state
+- **Low ceremony** — one command to start, attach, check, finish, or drop
+
+*If you want to go deeper, see [TECHNICAL.md](./docs/TECHNICAL.md)*
 
 ---
 
@@ -94,7 +84,7 @@ grove drop 2
 
 ---
 
-## Quick start (engineers)
+# Quick start
 
 ### Requirements
 
@@ -149,7 +139,7 @@ Full details (and alternatives like API keys) are in `docs/TECHNICAL.md`.
 
 ## Docs
 
-- `docs/TECHNICAL.md` — architecture, `grove.yaml` reference, filesystem layout, full CLI reference, daemon management, lifecycle details
+- [TECHNICAL.md](./docs/TECHNICAL.md) — architecture, `grove.yaml` reference, filesystem layout, full CLI reference, daemon management, lifecycle details
 
 ---
 
