@@ -529,14 +529,12 @@ func (d *Daemon) handleFinish(conn net.Conn, req proto.Request) {
 	p, err := loadProject(d.rootDir, projectName)
 	if err != nil {
 		fmt.Fprintf(conn, "warning: could not load project to run finish commands: %v\n", err)
-		stopContainer(inst.ContainerID, inst.ComposeProject)
 		return
 	}
 	if _, err := loadInRepoConfig(p); err != nil {
 		log.Printf("warning: could not read grove.yaml for %s: %v", projectName, err)
 	}
 	if len(p.Finish) == 0 {
-		stopContainer(inst.ContainerID, inst.ComposeProject)
 		return
 	}
 
@@ -553,7 +551,6 @@ func (d *Daemon) handleFinish(conn net.Conn, req proto.Request) {
 	w := newResilientWriter(conn, logFd)
 
 	containerID := inst.ContainerID
-	composeProject := inst.ComposeProject
 
 	for _, cmdStr := range p.Finish {
 		expanded := strings.ReplaceAll(cmdStr, "{{branch}}", branch)
@@ -561,12 +558,9 @@ func (d *Daemon) handleFinish(conn net.Conn, req proto.Request) {
 		if err := execInContainer(containerID, expanded, w); err != nil {
 			fmt.Fprintf(w, "error: command failed: %v\n", err)
 			log.Printf("instance %s: finish command failed: %v", inst.ID, err)
-			stopContainer(containerID, composeProject)
 			return
 		}
 	}
-
-	stopContainer(containerID, composeProject)
 }
 
 func (d *Daemon) handleCheck(conn net.Conn, req proto.Request) {
@@ -657,6 +651,10 @@ func (d *Daemon) handleRestart(conn net.Conn, req proto.Request) {
 	if err != nil {
 		respond(conn, proto.Response{OK: false, Error: err.Error()})
 		return
+	}
+
+	if _, err := loadInRepoConfig(p); err != nil {
+		log.Printf("warning: could not read grove.yaml for %s: %v", inst.Project, err)
 	}
 
 	// Non-fatal pull; output goes to daemon log only.
