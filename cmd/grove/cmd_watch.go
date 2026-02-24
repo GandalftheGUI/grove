@@ -58,9 +58,9 @@ func cmdWatch() {
 
 	fd := int(os.Stdout.Fd())
 
-	// Hide cursor; restore on exit.
-	fmt.Print("\033[?25l")
-	defer fmt.Print("\033[?25h")
+	// Enter alternate screen buffer; restore on exit.
+	fmt.Print("\033[?1049h\033[?25l")
+	defer fmt.Print("\033[?25h\033[?1049l")
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -77,7 +77,7 @@ func cmdWatch() {
 	for {
 		select {
 		case <-sigCh:
-			fmt.Print("\033[?25h")
+			fmt.Print("\033[?25h\033[?1049l")
 			os.Exit(0)
 		case <-winchCh:
 			drawWatch(fd, socketPath)
@@ -95,18 +95,18 @@ func drawWatch(fd int, socketPath string) {
 
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
-		fmt.Printf("\033[H\033[2Jdaemon not reachable: %v\n", err)
+		fmt.Printf("\033[Hdaemon not reachable: %v\n\033[J", err)
 		return
 	}
 	defer conn.Close()
 
 	if err := writeRequest(conn, proto.Request{Type: proto.ReqList}); err != nil {
-		fmt.Printf("\033[H\033[2Jdaemon not reachable: %v\n", err)
+		fmt.Printf("\033[Hdaemon not reachable: %v\n\033[J", err)
 		return
 	}
 	resp, err := readResponse(conn)
 	if err != nil || !resp.OK {
-		fmt.Printf("\033[H\033[2Jdaemon not reachable: %v\n", err)
+		fmt.Printf("\033[Hdaemon not reachable: %v\n\033[J", err)
 		return
 	}
 
@@ -129,7 +129,7 @@ func drawWatch(fd int, socketPath string) {
 	}
 
 	var buf strings.Builder
-	buf.WriteString("\033[H\033[2J")
+	buf.WriteString("\033[H")
 
 	// ASCII art grove header — banner with tree on either side.
 	const treeGap = 2
@@ -224,5 +224,6 @@ func drawWatch(fd int, socketPath string) {
 	fmt.Fprintf(&buf, "\n\033[2m  %d instance(s)  ·  %d running  ·  %s\033[0m\n",
 		len(resp.Instances), running, time.Now().Format("15:04:05"))
 
+	buf.WriteString("\033[J")
 	fmt.Print(buf.String())
 }
